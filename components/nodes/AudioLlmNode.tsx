@@ -7,6 +7,7 @@ import NodeShell from "./NodeShell";
 import { pipelineSocket } from "@/lib/websocket";
 import { useAudioStore } from "@/lib/audioStore";
 import { useNodeOutputStore } from "@/lib/nodeOutputStore";
+import { useNodeData } from "@/lib/useNodeData";
 
 /** Decode multiple base64 float32-PCM chunks, concatenate, re-encode as one base64 string. */
 function concatBase64Pcm(chunks: string[]): string {
@@ -52,13 +53,10 @@ export default function AudioLlmNode({ id, selected, data }: NodeProps) {
   const lastSeenAudioRef = useRef<string>("");
   const promptRef = useRef(prompt);
 
-  // Sync state from data prop (e.g. when workflow generator replaces nodes)
+  const updateData = useNodeData(id);
   useEffect(() => {
-    if (data?.prompt != null) setPrompt(data.prompt);
-  }, [data?.prompt]);
-  useEffect(() => {
-    if (data?.listenDuration != null) setListenDuration(data.listenDuration);
-  }, [data?.listenDuration]);
+    updateData({ prompt, listenDuration });
+  }, [prompt, listenDuration, updateData]);
 
   useEffect(() => {
     phaseRef.current = phase;

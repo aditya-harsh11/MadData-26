@@ -7,6 +7,7 @@ import NodeShell from "./NodeShell";
 import { pipelineSocket } from "@/lib/websocket";
 import { useAudioStore } from "@/lib/audioStore";
 import { useNodeOutputStore } from "@/lib/nodeOutputStore";
+import { useNodeData } from "@/lib/useNodeData";
 
 interface AudioDetection {
   label: string;
@@ -60,16 +61,10 @@ export default function AudioDetectNode({ id, selected, data }: NodeProps) {
   const lastSeenAudioRef = useRef<string>("");
   const lastOutputRef = useRef<string | null>(null);
 
-  // Sync state from data prop (e.g. when workflow generator replaces nodes)
+  const updateData = useNodeData(id);
   useEffect(() => {
-    if (data?.confidence != null) setConfidence(data.confidence);
-  }, [data?.confidence]);
-  useEffect(() => {
-    if (data?.listenDuration != null) setListenDuration(data.listenDuration);
-  }, [data?.listenDuration]);
-  useEffect(() => {
-    if (data?.filterLabels != null) setFilterText(data.filterLabels);
-  }, [data?.filterLabels]);
+    updateData({ confidence, listenDuration, filterLabels: filterText, retrigger });
+  }, [confidence, listenDuration, filterText, retrigger, updateData]);
 
   // Keep phaseRef in sync
   useEffect(() => {

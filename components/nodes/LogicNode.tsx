@@ -6,6 +6,7 @@ import { GitBranch, Plus, X, CheckCircle, XCircle } from "lucide-react";
 import NodeShell from "./NodeShell";
 import { useNodeOutputStore } from "@/lib/nodeOutputStore";
 import type { LogicCondition } from "@/lib/types";
+import { useNodeData } from "@/lib/useNodeData";
 
 const OPERATORS: { value: LogicCondition["operator"]; label: string }[] = [
   { value: "contains", label: "contains" },
@@ -48,16 +49,10 @@ export default function LogicNode({ id, selected, data }: NodeProps) {
   const [evalCount, setEvalCount] = useState(0);
   const lastInputRef = useRef<string | null>(null);
 
-  // Sync state from data prop (e.g. when workflow generator replaces nodes)
+  const updateData = useNodeData(id);
   useEffect(() => {
-    if (data?.conditions != null) setConditions(data.conditions);
-  }, [data?.conditions]);
-  useEffect(() => {
-    if (data?.mode != null) setMode(data.mode);
-  }, [data?.mode]);
-  useEffect(() => {
-    if (data?.retrigger != null) setRetrigger(data.retrigger);
-  }, [data?.retrigger]);
+    updateData({ conditions, mode, retrigger });
+  }, [conditions, mode, retrigger, updateData]);
 
   const edges = useEdges();
 

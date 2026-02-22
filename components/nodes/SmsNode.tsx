@@ -7,6 +7,7 @@ import NodeShell from "./NodeShell";
 import { useUpstreamTrigger } from "@/lib/useUpstreamTrigger";
 import { useOnlineStatus } from "@/lib/useOnlineStatus";
 import { pipelineSocket } from "@/lib/websocket";
+import { useNodeData } from "@/lib/useNodeData";
 
 export default function SmsNode({ id, selected, data }: NodeProps) {
   const [phoneTo, setPhoneTo] = useState(data?.smsTo || "");
@@ -19,11 +20,10 @@ export default function SmsNode({ id, selected, data }: NodeProps) {
   const { sourceOutput, sourceVersion } = useUpstreamTrigger(id, "trigger");
   const online = useOnlineStatus();
 
-  // Sync from data prop
+  const updateData = useNodeData(id);
   useEffect(() => {
-    if (data?.smsTo != null) setPhoneTo(data.smsTo);
-    if (data?.smsBody != null) setBodyTemplate(data.smsBody);
-  }, [data?.smsTo, data?.smsBody]);
+    updateData({ smsTo: phoneTo, smsBody: bodyTemplate });
+  }, [phoneTo, bodyTemplate, updateData]);
 
   // Listen for SMS results
   const handleResult = useCallback(

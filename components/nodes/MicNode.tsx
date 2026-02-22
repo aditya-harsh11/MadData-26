@@ -7,6 +7,7 @@ import NodeShell from "./NodeShell";
 import { AudioCapture } from "@/lib/audioCapture";
 import { useAudioStore } from "@/lib/audioStore";
 import { useWorkflowStore } from "@/lib/workflowStore";
+import { useNodeData } from "@/lib/useNodeData";
 import {
   isSwitching,
   getSwitchFromWorkflowId,
@@ -14,7 +15,7 @@ import {
   reclaimCapture,
 } from "@/lib/captureRegistry";
 
-export default function MicNode({ id, selected }: NodeProps) {
+export default function MicNode({ id, selected, data }: NodeProps) {
   const captureRef = useRef<AudioCapture | null>(null);
   const levelRef = useRef<number>(0);
   const [active, setActive] = useState(false);
@@ -23,7 +24,12 @@ export default function MicNode({ id, selected }: NodeProps) {
   const [error, setError] = useState<string | null>(null);
   const animFrameRef = useRef<number>(0);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedDevice, setSelectedDevice] = useState<string>("");
+  const [selectedDevice, setSelectedDevice] = useState<string>(data?.selectedDevice ?? "");
+
+  const updateData = useNodeData(id);
+  useEffect(() => {
+    updateData({ selectedDevice });
+  }, [selectedDevice, updateData]);
 
   // ── Combined reclaim + cleanup effect (must be defined BEFORE enumerate) ──
   useEffect(() => {

@@ -5,6 +5,7 @@ import { Handle, Position, type NodeProps } from "reactflow";
 import { Volume2, Upload, Play } from "lucide-react";
 import NodeShell from "./NodeShell";
 import { useUpstreamTrigger } from "@/lib/useUpstreamTrigger";
+import { useNodeData } from "@/lib/useNodeData";
 
 type SoundPreset = "beep" | "siren" | "chime";
 
@@ -19,10 +20,10 @@ export default function SoundAlertNode({ id, selected, data }: NodeProps) {
 
   const { sourceOutput, sourceVersion } = useUpstreamTrigger(id, "trigger");
 
-  // Sync from data prop
+  const updateData = useNodeData(id);
   useEffect(() => {
-    if (data?.soundPreset) setPreset(data.soundPreset);
-  }, [data?.soundPreset]);
+    updateData({ soundPreset: preset });
+  }, [preset, updateData]);
 
   // Cleanup custom audio URL on unmount
   useEffect(() => {

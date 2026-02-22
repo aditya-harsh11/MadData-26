@@ -5,6 +5,7 @@ import { Handle, Position, type NodeProps } from "reactflow";
 import { Webhook } from "lucide-react";
 import NodeShell from "./NodeShell";
 import { useUpstreamTrigger } from "@/lib/useUpstreamTrigger";
+import { useNodeData } from "@/lib/useNodeData";
 
 export default function WebhookNode({ id, selected, data }: NodeProps) {
   const [webhookUrl, setWebhookUrl] = useState(data?.webhookUrl || "");
@@ -14,10 +15,10 @@ export default function WebhookNode({ id, selected, data }: NodeProps) {
 
   const { sourceOutput, sourceVersion } = useUpstreamTrigger(id, "trigger");
 
-  // Sync from data prop
+  const updateData = useNodeData(id);
   useEffect(() => {
-    if (data?.webhookUrl != null) setWebhookUrl(data.webhookUrl);
-  }, [data?.webhookUrl]);
+    updateData({ webhookUrl });
+  }, [webhookUrl, updateData]);
 
   // Trigger on upstream change
   useEffect(() => {

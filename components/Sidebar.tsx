@@ -21,6 +21,7 @@ import {
   Webhook,
   Mail,
   MessageCircle,
+  Music,
 } from "lucide-react";
 import { NODE_CATALOG, type NodeTypeInfo } from "@/lib/types";
 
@@ -41,6 +42,7 @@ const iconMap: Record<string, React.ReactNode> = {
   Webhook: <Webhook size={18} />,
   Mail: <Mail size={18} />,
   MessageCircle: <MessageCircle size={18} />,
+  Music: <Music size={18} />,
 };
 
 const categoryLabels: Record<string, string> = {

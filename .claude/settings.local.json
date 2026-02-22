@@ -1,0 +1,41 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"/c/Users/hackathon user/Documents/maddata/MadData-26\" && npm install 2>&1)",
+      "Bash(cd \"/c/Users/hackathon user/Documents/maddata/MadData-26\" && npx next build 2>&1)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(pip install:*)",
+      "Bash(tail:*)",
+      "Bash(head:*)",
+      "Bash(python:*)",
+      "Bash(where qai-hub 2>&1 || python -c \"import qai_hub; print\\(qai_hub.__file__\\)\" 2>&1)",
+      "Bash(\"/c/Users/hackathon user/AppData/Local/Packages/PythonSoftwareFoundation.Python.3.13_qbz5n2kfra8p0/LocalCache/local-packages/Python313/Scripts/qai-hub.exe\" configure:*)",
+      "Bash(grep:*)",
+      "Bash(pip uninstall onnxruntime-qnn -y 2>&1 && pip install onnxruntime-qnn --platform win_arm64 --only-binary=:all: 2>&1)",
+      "WebFetch(domain:www.python.org)",
+      "Bash(curl:*)",
+      "Bash(\"/c/Users/hackathon user/Downloads/python-3.13.12-arm64.exe\":*)",
+      "Bash(\"/c/Users/hackathon user/AppData/Local/Programs/Python/Python313-arm64/python.exe\":*)",
+      "Bash(find:*)",
+      "Bash(cd:*)",
+      "Bash(grep :8000:*)",
+      "Bash(taskkill:*)",
+      "WebSearch",
+      "WebFetch(domain:aihub.qualcomm.com)",
+      "WebFetch(domain:app.aihub.qualcomm.com)",
+      "WebFetch(domain:workbench.aihub.qualcomm.com)",
+      "Bash(\"$LOCALAPPDATA/Programs/Python/Python313-arm64/python.exe\":*)",
+      "Bash(ls:*)",
+      "Bash(tr:*)",
+      "Bash(cd \"C:\\\\Users\\\\hackathon user\\\\Documents\\\\maddata\\\\MadData-26\\\\backend\" && \"C:\\\\Users\\\\hackathon user\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313-arm64\\\\python.exe\" -c \"from watchdog import Watchdog; print\\('Watchdog import OK'\\)\" 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\hackathon user\\\\Documents\\\\maddata\\\\MadData-26\\\\backend\" && \"C:\\\\Users\\\\hackathon user\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313-arm64\\\\python.exe\" -c \"\nfrom pathlib import Path\nmodel_dir = Path\\('main.py'\\).parent / 'models'\nmodel_path = model_dir / 'yolov8n.onnx'\nprint\\(f'Model path: {model_path}'\\)\nprint\\(f'Exists: {model_path.exists\\(\\)}'\\)\nprint\\(f'Size: {model_path.stat\\(\\).st_size if model_path.exists\\(\\) else 0} bytes'\\)\n\" 2>&1)",
+      "Bash(cd \"C:\\\\Users\\\\hackathon user\\\\Documents\\\\maddata\\\\MadData-26\\\\backend\" && \"C:\\\\Users\\\\hackathon user\\\\AppData\\\\Local\\\\Programs\\\\Python\\\\Python313-arm64\\\\python.exe\" -c \"\nfrom watchdog import Watchdog, _nms\nimport numpy as np\n\n# Test NMS with overlapping boxes\nboxes = np.array\\([\n    [0.1, 0.1, 0.5, 0.5],\n    [0.12, 0.12, 0.52, 0.52],  # overlaps heavily with box 0\n    [0.11, 0.11, 0.51, 0.51],  # overlaps heavily with box 0\n    [0.7, 0.7, 0.9, 0.9],     # separate box\n]\\)\nscores = np.array\\([0.9, 0.8, 0.85, 0.7]\\)\nkeep = _nms\\(boxes, scores\\)\nprint\\(f'NMS test: {len\\(boxes\\)} boxes -> {len\\(keep\\)} kept \\(indices: {keep}\\)'\\)\nassert len\\(keep\\) == 2, f'Expected 2, got {len\\(keep\\)}'\nprint\\('NMS test PASSED'\\)\n\" 2>&1)",
+      "Bash(cd \"/c/Users/hackathon user/Documents/maddata/MadData-26\" && npx tsc --noEmit 2>&1)",
+      "WebFetch(domain:docs.nexa.ai)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:nexa.ai)",
+      "Bash(pip show nexaai 2>/dev/null || pip show nexa 2>/dev/null || pip show nexa-sdk 2>/dev/null || echo \"Not installed via pip, checking nexa location...\" && which nexa 2>/dev/null && nexa --version 2>/dev/null)"
+    ]
+  }
+}

@@ -36,6 +36,7 @@ import SmsNode from "./nodes/SmsNode";
 import MicNode from "./nodes/MicNode";
 import AudioDetectNode from "./nodes/AudioDetectNode";
 import AudioLlmNode from "./nodes/AudioLlmNode";
+import AudioFileNode from "./nodes/AudioFileNode";
 import { pipelineSocket } from "@/lib/websocket";
 import { useWorkflowStore, type SavedWorkflow } from "@/lib/workflowStore";
 import { useFrameStore } from "@/lib/frameStore";
@@ -64,6 +65,7 @@ const nodeTypes = {
   mic: MicNode,
   audioDetect: AudioDetectNode,
   audioLlm: AudioLlmNode,
+  audioFile: AudioFileNode,
 };
 
 const VALID_NODE_TYPES = new Set<string>(Object.keys(nodeTypes));

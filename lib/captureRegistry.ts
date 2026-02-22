@@ -44,7 +44,20 @@ export interface ParkedMic {
   workflowId: string;
 }
 
-export type ParkedCapture = ParkedCamera | ParkedVideo | ParkedMic;
+export interface ParkedAudioFile {
+  type: "audioFile";
+  decodedPcm: Float32Array;
+  objectUrl: string;
+  fileName: string;
+  intervalId: ReturnType<typeof setInterval> | null;
+  position: number;
+  active: boolean;
+  loop: boolean;
+  nodeId: string;
+  workflowId: string;
+}
+
+export type ParkedCapture = ParkedCamera | ParkedVideo | ParkedMic | ParkedAudioFile;
 
 // ─── Global switch state ───
 
@@ -129,6 +142,10 @@ export function destroyWorkflowCaptures(workflowId: string) {
     } else if (entry.type === "mic") {
       entry.capture.destroy();
       useAudioStore.getState().removeAudio(nsKey);
+    } else if (entry.type === "audioFile") {
+      if (entry.intervalId) clearInterval(entry.intervalId);
+      URL.revokeObjectURL(entry.objectUrl);
+      useAudioStore.getState().removeAudio(nsKey);
     }
 
     _parked.delete(key);
@@ -148,6 +165,9 @@ export function destroyAllCaptures() {
       URL.revokeObjectURL(entry.objectUrl);
     } else if (entry.type === "mic") {
       entry.capture.destroy();
+    } else if (entry.type === "audioFile") {
+      if (entry.intervalId) clearInterval(entry.intervalId);
+      URL.revokeObjectURL(entry.objectUrl);
     }
   }
   _parked.clear();

@@ -7,6 +7,7 @@ import NodeShell from "./NodeShell";
 import { pipelineSocket } from "@/lib/websocket";
 import { useFrameStore } from "@/lib/frameStore";
 import { useNodeOutputStore } from "@/lib/nodeOutputStore";
+import { useNodeData } from "@/lib/useNodeData";
 
 interface Detection {
   label: string;
@@ -31,16 +32,10 @@ export default function DetectionNode({ id, selected, data }: NodeProps) {
   const lastOutputRef = useRef<string | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
 
-  // Sync state from data prop (e.g. when workflow generator replaces nodes)
+  const updateData = useNodeData(id);
   useEffect(() => {
-    if (data?.confidence != null) setConfidence(data.confidence);
-  }, [data?.confidence]);
-  useEffect(() => {
-    if (data?.interval != null) setInterval_(data.interval);
-  }, [data?.interval]);
-  useEffect(() => {
-    if (data?.filterLabels != null) setFilterText(data.filterLabels);
-  }, [data?.filterLabels]);
+    updateData({ confidence, interval, filterLabels: filterText, retrigger });
+  }, [confidence, interval, filterText, retrigger, updateData]);
 
   // Parse comma-separated filter into lowercase label list
   const filterLabels = useMemo(() => {

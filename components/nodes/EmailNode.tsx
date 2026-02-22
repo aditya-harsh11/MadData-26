@@ -7,6 +7,7 @@ import NodeShell from "./NodeShell";
 import { useUpstreamTrigger } from "@/lib/useUpstreamTrigger";
 import { useOnlineStatus } from "@/lib/useOnlineStatus";
 import { pipelineSocket } from "@/lib/websocket";
+import { useNodeData } from "@/lib/useNodeData";
 
 export default function EmailNode({ id, selected, data }: NodeProps) {
   const [emailTo, setEmailTo] = useState(data?.emailTo || "");
@@ -20,12 +21,10 @@ export default function EmailNode({ id, selected, data }: NodeProps) {
   const { sourceOutput, sourceVersion } = useUpstreamTrigger(id, "trigger");
   const online = useOnlineStatus();
 
-  // Sync from data prop
+  const updateData = useNodeData(id);
   useEffect(() => {
-    if (data?.emailTo != null) setEmailTo(data.emailTo);
-    if (data?.emailSubject != null) setSubject(data.emailSubject);
-    if (data?.emailBody != null) setBodyTemplate(data.emailBody);
-  }, [data?.emailTo, data?.emailSubject, data?.emailBody]);
+    updateData({ emailTo, emailSubject: subject, emailBody: bodyTemplate });
+  }, [emailTo, subject, bodyTemplate, updateData]);
 
   // Listen for email results
   const handleResult = useCallback(

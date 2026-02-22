@@ -92,6 +92,14 @@ export const NODE_CATALOG: NodeTypeInfo[] = [
     icon: "Mic",
   },
   {
+    type: "audioFile",
+    label: "Audio Input",
+    description: "Play audio file as mic input",
+    category: "input",
+    accent: "#06b6d4",
+    icon: "Music",
+  },
+  {
     type: "audioDetect",
     label: "Audio Detect",
     description: "YamNet sound classification (ONNX)",

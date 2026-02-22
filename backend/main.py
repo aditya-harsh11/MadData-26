@@ -493,6 +493,7 @@ NODE_TYPE_LABELS = {
     "audioDetect": "Audio Detect",
     "audioLlm": "Audio LLM",
     "video": "Video Input",
+    "audioFile": "Audio File Input",
 }
 
 
@@ -554,7 +555,7 @@ async def handle_describe_workflow(cid: str, payload: dict):
 
 # ─── Generate workflow from text (AI creates nodes + edges) ───
 
-VALID_NODE_TYPES = {"camera", "video", "detection", "visualLlm", "logic", "llm", "soundAction", "logAction", "notifyAction", "screenshotAction", "webhookAction", "emailAction", "smsAction", "mic", "audioDetect", "audioLlm"}
+VALID_NODE_TYPES = {"camera", "video", "detection", "visualLlm", "logic", "llm", "soundAction", "logAction", "notifyAction", "screenshotAction", "webhookAction", "emailAction", "smsAction", "mic", "audioDetect", "audioLlm", "audioFile"}
 
 GENERATE_WORKFLOW_PROMPT = """Output ONLY a single line of compact JSON. No newlines inside the JSON. No indentation. No markdown. No explanation.
 
@@ -563,11 +564,12 @@ RULES:
 - HEAR/listen/sound/speech/music → mic + audioLlm
 - camera "frames" → visualLlm "camera" or detection "camera" ONLY
 - mic "audio" → audioLlm "audio" or audioDetect "audio" ONLY
+- audioFile "audio" → audioLlm "audio" or audioDetect "audio" ONLY (same as mic)
 - NEVER connect camera→audioLlm or mic→visualLlm
 - action node types: sound/alarm→"soundAction", notify/tell me→"notifyAction", log/record→"logAction", webhook→"webhookAction", screenshot/capture→"screenshotAction", email→"emailAction", sms/text→"smsAction"
 - KEYWORD in AI prompt MUST match logic condition value
 
-Node data: camera:{}, mic:{}, visualLlm:{"prompt":"...Say KEYWORD if...","interval":5}, audioLlm:{"prompt":"...Say KEYWORD if...","listenDuration":3}, detection:{"confidence":45,"interval":2}, audioDetect:{"confidence":15,"interval":2}, logic:{"conditions":[{"id":"1","operator":"contains","value":"KEYWORD"}],"mode":"any"}, soundAction:{}, logAction:{}, notifyAction:{}, webhookAction:{"webhookUrl":""}, screenshotAction:{}, emailAction:{"emailTo":"","emailSubject":"arcflow Alert"}, smsAction:{"smsTo":""}
+Node data: camera:{}, mic:{}, audioFile:{}, visualLlm:{"prompt":"...Say KEYWORD if...","interval":5}, audioLlm:{"prompt":"...Say KEYWORD if...","listenDuration":3}, detection:{"confidence":45,"interval":2}, audioDetect:{"confidence":15,"interval":2}, logic:{"conditions":[{"id":"1","operator":"contains","value":"KEYWORD"}],"mode":"any"}, soundAction:{}, logAction:{}, notifyAction:{}, webhookAction:{"webhookUrl":""}, screenshotAction:{}, emailAction:{"emailTo":"","emailSubject":"arcflow Alert"}, smsAction:{"smsTo":""}
 
 Pattern: input→AI→logic→action (4 nodes, 3 edges). You can connect multiple action nodes from one logic output.
 
@@ -577,7 +579,7 @@ Example "watch for dogs and play sound":
 Example "notify when music playing":
 {"nodes":[{"id":"mic-1","type":"mic","data":{}},{"id":"audio-llm-1","type":"audioLlm","data":{"prompt":"Listen carefully. Say 'music detected' if you hear music.","listenDuration":3}},{"id":"logic-1","type":"logic","data":{"conditions":[{"id":"1","operator":"contains","value":"music detected"}],"mode":"any"}},{"id":"notify-1","type":"notifyAction","data":{}}],"edges":[{"source":"mic-1","target":"audio-llm-1","sourceHandle":"audio","targetHandle":"audio"},{"source":"audio-llm-1","target":"logic-1","sourceHandle":"response","targetHandle":"input"},{"source":"logic-1","target":"notify-1","sourceHandle":"match","targetHandle":"trigger"}]}
 
-IDs: camera-1, mic-1, vlm-1, detect-1, logic-1, sound-1, log-1, notify-1, screenshot-1, webhook-1, email-1, sms-1, audio-llm-1, audio-detect-1, llm-1
+IDs: camera-1, mic-1, audiofile-1, vlm-1, detect-1, logic-1, sound-1, log-1, notify-1, screenshot-1, webhook-1, email-1, sms-1, audio-llm-1, audio-detect-1, llm-1
 Now generate the JSON for the user's request. Do NOT output empty arrays. You MUST include real nodes and edges."""
 
 
@@ -592,6 +594,7 @@ _VALID_CONNECTIONS: dict[tuple[str, str], set[tuple[str, str]]] = {
     ("camera", "frames"):       {("visualLlm", "camera"), ("detection", "camera"), ("screenshotAction", "camera")},
     ("video", "frames"):        {("visualLlm", "camera"), ("detection", "camera"), ("screenshotAction", "camera")},
     ("mic", "audio"):           {("audioLlm", "audio"), ("audioDetect", "audio")},
+    ("audioFile", "audio"):     {("audioLlm", "audio"), ("audioDetect", "audio")},
     ("visualLlm", "response"):  {("logic", "input"), ("llm", "input")} | _ACTION_TRIGGERS,
     ("audioLlm", "response"):   {("logic", "input"), ("llm", "input")} | _ACTION_TRIGGERS,
     ("detection", "match"):     {("llm", "input"), ("visualLlm", "trigger")} | _ACTION_TRIGGERS,

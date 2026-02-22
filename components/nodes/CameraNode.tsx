@@ -7,6 +7,7 @@ import NodeShell from "./NodeShell";
 import { FrameCapture } from "@/lib/frameCapture";
 import { useFrameStore } from "@/lib/frameStore";
 import { useWorkflowStore } from "@/lib/workflowStore";
+import { useNodeData } from "@/lib/useNodeData";
 import {
   isSwitching,
   getSwitchFromWorkflowId,
@@ -14,15 +15,20 @@ import {
   reclaimCapture,
 } from "@/lib/captureRegistry";
 
-export default function CameraNode({ id, selected }: NodeProps) {
+export default function CameraNode({ id, selected, data }: NodeProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const captureRef = useRef<FrameCapture | null>(null);
   const [active, setActive] = useState(false);
-  const [fps, setFps] = useState(3);
+  const [fps, setFps] = useState(data?.fps ?? 3);
   const [frameCount, setFrameCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
-  const [selectedDevice, setSelectedDevice] = useState<string>("");
+  const [selectedDevice, setSelectedDevice] = useState<string>(data?.selectedDevice ?? "");
+
+  const updateData = useNodeData(id);
+  useEffect(() => {
+    updateData({ fps, selectedDevice });
+  }, [fps, selectedDevice, updateData]);
 
   // ── Combined reclaim + cleanup effect (must be defined BEFORE enumerate) ──
   useEffect(() => {

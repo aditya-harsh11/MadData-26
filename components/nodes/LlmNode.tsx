@@ -6,6 +6,7 @@ import { MessageSquare, Send, Loader } from "lucide-react";
 import NodeShell from "./NodeShell";
 import { pipelineSocket } from "@/lib/websocket";
 import { useNodeOutputStore } from "@/lib/nodeOutputStore";
+import { useNodeData } from "@/lib/useNodeData";
 
 export default function LlmNode({ id, selected, data }: NodeProps) {
   const [systemPrompt, setSystemPrompt] = useState<string>(
@@ -17,10 +18,10 @@ export default function LlmNode({ id, selected, data }: NodeProps) {
   const [manualPrompt, setManualPrompt] = useState("");
   const processingRef = useRef(false);
 
-  // Sync state from data prop (e.g. when workflow generator replaces nodes)
+  const updateData = useNodeData(id);
   useEffect(() => {
-    if (data?.systemPrompt != null) setSystemPrompt(data.systemPrompt);
-  }, [data?.systemPrompt]);
+    updateData({ systemPrompt });
+  }, [systemPrompt, updateData]);
 
   const edges = useEdges();
 

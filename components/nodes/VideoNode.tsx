@@ -6,6 +6,7 @@ import { Film, Play, Square, Upload } from "lucide-react";
 import NodeShell from "./NodeShell";
 import { useFrameStore } from "@/lib/frameStore";
 import { useWorkflowStore } from "@/lib/workflowStore";
+import { useNodeData } from "@/lib/useNodeData";
 import {
   isSwitching,
   getSwitchFromWorkflowId,
@@ -41,10 +42,10 @@ export default function VideoNode({ id, selected, data }: NodeProps) {
   useEffect(() => { fpsRef.current = fps; }, [fps]);
   useEffect(() => { fileNameRef.current = fileName; }, [fileName]);
 
-  // Sync fps from data prop
+  const updateData = useNodeData(id);
   useEffect(() => {
-    if (data?.fps !== undefined) setFps(data.fps);
-  }, [data?.fps]);
+    updateData({ fps });
+  }, [fps, updateData]);
 
   // ── Combined reclaim + cleanup effect ──
   useEffect(() => {

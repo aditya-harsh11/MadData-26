@@ -7,6 +7,7 @@ import NodeShell from "./NodeShell";
 import { pipelineSocket } from "@/lib/websocket";
 import { useFrameStore } from "@/lib/frameStore";
 import { useNodeOutputStore } from "@/lib/nodeOutputStore";
+import { useNodeData } from "@/lib/useNodeData";
 
 export default function VisualLlmNode({ id, selected, data }: NodeProps) {
   const [prompt, setPrompt] = useState<string>(
@@ -21,13 +22,10 @@ export default function VisualLlmNode({ id, selected, data }: NodeProps) {
   const processingRef = useRef(false);
   const lastTriggerVersionRef = useRef(0);
 
-  // Sync state from data prop (e.g. when workflow generator replaces nodes)
+  const updateData = useNodeData(id);
   useEffect(() => {
-    if (data?.prompt != null) setPrompt(data.prompt);
-  }, [data?.prompt]);
-  useEffect(() => {
-    if (data?.interval != null) setInterval_(data.interval);
-  }, [data?.interval]);
+    updateData({ prompt, interval });
+  }, [prompt, interval, updateData]);
 
   useEffect(() => {
     promptRef.current = prompt;
