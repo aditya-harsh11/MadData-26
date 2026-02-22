@@ -1,5 +1,5 @@
 """
-SnapFlow Backend — FastAPI server with WebSocket pipeline.
+arcflow Backend — FastAPI server with WebSocket pipeline.
 
 Visual LLM architecture:
   On-demand VLM analysis via Nexa SDK, triggered by frontend interval timer.
@@ -44,7 +44,7 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     datefmt="%H:%M:%S",
 )
-logger = logging.getLogger("snapflow")
+logger = logging.getLogger("arcflow")
 
 # ─── AI Engine ───
 brain = ReasoningBrain()
@@ -95,7 +95,7 @@ DEFAULT_PROMPT = "Describe what you see. If there is any safety concern, explain
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
     logger.info("=" * 50)
-    logger.info("  SnapFlow Backend Starting")
+    logger.info("  arcflow Backend Starting")
     logger.info("=" * 50)
 
     loop = asyncio.get_event_loop()
@@ -105,9 +105,15 @@ async def lifespan(app: FastAPI):
             await loop.run_in_executor(None, brain.load_vlm)
         except Exception as e:
             logger.warning(f"Could not load VLM: {e}")
-        logger.info(f"VLM loaded: {brain.vlm_loaded}")
+        brain.load_llm()
+        logger.info(f"VLM loaded: {brain.vlm_loaded}, LLM loaded: {brain.llm_loaded}")
 
     asyncio.create_task(_load_brain())
+
+    if not os.environ.get("ARCFLOW_SMTP_USER"):
+        logger.warning("ARCFLOW_SMTP_USER not set — Email node will not work")
+    if not os.environ.get("TWILIO_ACCOUNT_SID"):
+        logger.warning("TWILIO_ACCOUNT_SID not set — SMS node will not work")
 
     logger.info("Backend ready — waiting for WebSocket connections")
 
@@ -117,7 +123,7 @@ async def lifespan(app: FastAPI):
     logger.info("Backend shutting down")
 
 
-app = FastAPI(title="SnapFlow Backend", lifespan=lifespan)
+app = FastAPI(title="arcflow Backend", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -198,6 +204,10 @@ async def websocket_endpoint(ws: WebSocket):
                 await handle_audio_llm_analyze(cid, payload)
             elif msg_type == "generate_workflow":
                 await handle_generate_workflow(cid, payload)
+            elif msg_type == "send_email":
+                await handle_send_email(cid, payload)
+            elif msg_type == "send_sms":
+                await handle_send_sms(cid, payload)
             else:
                 logger.warning(f"Unknown message type: {msg_type}")
 
@@ -385,6 +395,85 @@ async def handle_text_gen(cid: str, payload: dict):
     })
 
 
+# ─── Email & SMS actions ───
+
+def _send_email_sync(to: str, subject: str, body: str) -> dict:
+    """Send email via SMTP (blocking). Returns {success, error?}."""
+    import smtplib
+    from email.mime.text import MIMEText
+
+    smtp_user = os.environ.get("ARCFLOW_SMTP_USER", "")
+    smtp_pass = os.environ.get("ARCFLOW_SMTP_PASS", "")
+    smtp_host = os.environ.get("ARCFLOW_SMTP_HOST", "smtp.gmail.com")
+    smtp_port = int(os.environ.get("ARCFLOW_SMTP_PORT", "587"))
+
+    if not smtp_user or not smtp_pass:
+        return {"success": False, "error": "SMTP credentials not configured (set ARCFLOW_SMTP_USER and ARCFLOW_SMTP_PASS)"}
+
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"] = smtp_user
+    msg["To"] = to
+
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as server:
+            server.starttls()
+            server.login(smtp_user, smtp_pass)
+            server.sendmail(smtp_user, [to], msg.as_string())
+        return {"success": True}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def handle_send_email(cid: str, payload: dict):
+    to = payload.get("to", "")
+    subject = payload.get("subject", "arcflow Alert")
+    body = payload.get("body", "")
+    node_id = payload.get("node_id", "")
+
+    if not to:
+        await manager.send(cid, "email_result", {"node_id": node_id, "success": False, "error": "No recipient"})
+        return
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _send_email_sync, to, subject, body)
+    await manager.send(cid, "email_result", {"node_id": node_id, **result})
+
+
+def _send_sms_sync(to: str, body: str) -> dict:
+    """Send SMS via Twilio (blocking). Returns {success, error?}."""
+    account_sid = os.environ.get("TWILIO_ACCOUNT_SID", "")
+    auth_token = os.environ.get("TWILIO_AUTH_TOKEN", "")
+    from_number = os.environ.get("TWILIO_FROM_NUMBER", "")
+
+    if not account_sid or not auth_token or not from_number:
+        return {"success": False, "error": "Twilio credentials not configured (set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_FROM_NUMBER)"}
+
+    try:
+        from twilio.rest import Client
+        client = Client(account_sid, auth_token)
+        client.messages.create(body=body, from_=from_number, to=to)
+        return {"success": True}
+    except ImportError:
+        return {"success": False, "error": "twilio package not installed (pip install twilio)"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+async def handle_send_sms(cid: str, payload: dict):
+    to = payload.get("to", "")
+    body = payload.get("body", "")
+    node_id = payload.get("node_id", "")
+
+    if not to:
+        await manager.send(cid, "sms_result", {"node_id": node_id, "success": False, "error": "No phone number"})
+        return
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _send_sms_sync, to, body)
+    await manager.send(cid, "sms_result", {"node_id": node_id, **result})
+
+
 # ─── Describe workflow (AI-generated summary) ───
 
 NODE_TYPE_LABELS = {
@@ -393,10 +482,17 @@ NODE_TYPE_LABELS = {
     "visualLlm": "Visual LLM",
     "logic": "Logic",
     "llm": "LLM",
-    "action": "Action",
+    "soundAction": "Sound Alert",
+    "logAction": "Log",
+    "notifyAction": "Notification",
+    "screenshotAction": "Screenshot",
+    "webhookAction": "Webhook",
+    "emailAction": "Email",
+    "smsAction": "SMS",
     "mic": "Microphone",
     "audioDetect": "Audio Detect",
     "audioLlm": "Audio LLM",
+    "video": "Video Input",
 }
 
 
@@ -458,67 +554,119 @@ async def handle_describe_workflow(cid: str, payload: dict):
 
 # ─── Generate workflow from text (AI creates nodes + edges) ───
 
-VALID_NODE_TYPES = {"camera", "detection", "visualLlm", "logic", "llm", "action", "mic", "audioDetect", "audioLlm"}
+VALID_NODE_TYPES = {"camera", "video", "detection", "visualLlm", "logic", "llm", "soundAction", "logAction", "notifyAction", "screenshotAction", "webhookAction", "emailAction", "smsAction", "mic", "audioDetect", "audioLlm"}
 
-GENERATE_WORKFLOW_PROMPT = """You are a pipeline designer for SnapFlow, a visual AI camera pipeline editor.
-The user will describe a workflow. Output ONLY valid JSON, no other text.
+GENERATE_WORKFLOW_PROMPT = """Output ONLY a single line of compact JSON. No newlines inside the JSON. No indentation. No markdown. No explanation.
 
-Output format:
-{
-  "nodes": [
-    {"id": "unique-id", "type": "TYPE", "data": { ... }},
-    ...
-  ],
-  "edges": [
-    {"source": "source-id", "target": "target-id", "sourceHandle": "handle-name", "targetHandle": "handle-name"},
-    ...
-  ]
+RULES:
+- SEE/watch/look/detect objects → camera + visualLlm
+- HEAR/listen/sound/speech/music → mic + audioLlm
+- camera "frames" → visualLlm "camera" or detection "camera" ONLY
+- mic "audio" → audioLlm "audio" or audioDetect "audio" ONLY
+- NEVER connect camera→audioLlm or mic→visualLlm
+- action node types: sound/alarm→"soundAction", notify/tell me→"notifyAction", log/record→"logAction", webhook→"webhookAction", screenshot/capture→"screenshotAction", email→"emailAction", sms/text→"smsAction"
+- KEYWORD in AI prompt MUST match logic condition value
+
+Node data: camera:{}, mic:{}, visualLlm:{"prompt":"...Say KEYWORD if...","interval":5}, audioLlm:{"prompt":"...Say KEYWORD if...","listenDuration":3}, detection:{"confidence":45,"interval":2}, audioDetect:{"confidence":15,"interval":2}, logic:{"conditions":[{"id":"1","operator":"contains","value":"KEYWORD"}],"mode":"any"}, soundAction:{}, logAction:{}, notifyAction:{}, webhookAction:{"webhookUrl":""}, screenshotAction:{}, emailAction:{"emailTo":"","emailSubject":"arcflow Alert"}, smsAction:{"smsTo":""}
+
+Pattern: input→AI→logic→action (4 nodes, 3 edges). You can connect multiple action nodes from one logic output.
+
+Example "watch for dogs and play sound":
+{"nodes":[{"id":"camera-1","type":"camera","data":{}},{"id":"vlm-1","type":"visualLlm","data":{"prompt":"Look carefully. Say 'dog detected' if you see a dog.","interval":5}},{"id":"logic-1","type":"logic","data":{"conditions":[{"id":"1","operator":"contains","value":"dog detected"}],"mode":"any"}},{"id":"sound-1","type":"soundAction","data":{}}],"edges":[{"source":"camera-1","target":"vlm-1","sourceHandle":"frames","targetHandle":"camera"},{"source":"vlm-1","target":"logic-1","sourceHandle":"response","targetHandle":"input"},{"source":"logic-1","target":"sound-1","sourceHandle":"match","targetHandle":"trigger"}]}
+
+Example "notify when music playing":
+{"nodes":[{"id":"mic-1","type":"mic","data":{}},{"id":"audio-llm-1","type":"audioLlm","data":{"prompt":"Listen carefully. Say 'music detected' if you hear music.","listenDuration":3}},{"id":"logic-1","type":"logic","data":{"conditions":[{"id":"1","operator":"contains","value":"music detected"}],"mode":"any"}},{"id":"notify-1","type":"notifyAction","data":{}}],"edges":[{"source":"mic-1","target":"audio-llm-1","sourceHandle":"audio","targetHandle":"audio"},{"source":"audio-llm-1","target":"logic-1","sourceHandle":"response","targetHandle":"input"},{"source":"logic-1","target":"notify-1","sourceHandle":"match","targetHandle":"trigger"}]}
+
+IDs: camera-1, mic-1, vlm-1, detect-1, logic-1, sound-1, log-1, notify-1, screenshot-1, webhook-1, email-1, sms-1, audio-llm-1, audio-detect-1, llm-1
+Now generate the JSON for the user's request. Do NOT output empty arrays. You MUST include real nodes and edges."""
+
+
+# Valid connections: (source_type, sourceHandle) → set of (target_type, targetHandle)
+_ACTION_TRIGGERS = {
+    ("soundAction", "trigger"), ("logAction", "trigger"), ("notifyAction", "trigger"),
+    ("screenshotAction", "trigger"), ("webhookAction", "trigger"),
+    ("emailAction", "trigger"), ("smsAction", "trigger"),
 }
 
-Allowed node types, their data fields, and handle names:
-
-1. camera — Live camera feed. Data: {} (no fields needed).
-   Output handle: "frames"
-
-2. visualLlm — Vision AI that analyzes camera frames with a custom prompt. Data: {"prompt": "what to look for", "interval": 10}
-   Input handle: "camera" (connect from camera's "frames")
-   Output handle: "response"
-
-3. logic — Conditional routing based on text content. Data: {"conditions": [{"id": "1", "operator": "contains", "value": "keyword"}], "mode": "any"}
-   Operators: contains, not_contains, equals, starts_with
-   Input handle: "input" (connect from visualLlm's "response" or llm's "output")
-   Output handles: "match" (condition true), "no_match" (condition false)
-
-4. llm — Text processing (same model, no image). Data: {"systemPrompt": "instruction for the LLM"}
-   Input handle: "input" (connect from any text output)
-   Output handle: "output"
-
-5. action — Terminal action node. Data: {"actionType": "sound"} (options: sound, log, notification, webhook)
-   Input handle: "trigger" (connect from logic's "match" or any text output)
-
-IMPORTANT: Always populate the data fields with sensible values based on the user's description. For example, if the user says "detect cats", set the visualLlm prompt to "Look for cats in the scene. Report if any cats are visible." and the logic condition to {"operator": "contains", "value": "cat"}.
-
-Use short, unique node ids (e.g. camera-1, vlm-1, logic-1, action-1). Output only the JSON object."""
+_VALID_CONNECTIONS: dict[tuple[str, str], set[tuple[str, str]]] = {
+    ("camera", "frames"):       {("visualLlm", "camera"), ("detection", "camera"), ("screenshotAction", "camera")},
+    ("video", "frames"):        {("visualLlm", "camera"), ("detection", "camera"), ("screenshotAction", "camera")},
+    ("mic", "audio"):           {("audioLlm", "audio"), ("audioDetect", "audio")},
+    ("visualLlm", "response"):  {("logic", "input"), ("llm", "input")} | _ACTION_TRIGGERS,
+    ("audioLlm", "response"):   {("logic", "input"), ("llm", "input")} | _ACTION_TRIGGERS,
+    ("detection", "match"):     {("llm", "input"), ("visualLlm", "trigger")} | _ACTION_TRIGGERS,
+    ("detection", "no_match"):  {("llm", "input"), ("visualLlm", "trigger")} | _ACTION_TRIGGERS,
+    ("audioDetect", "match"):   {("llm", "input")} | _ACTION_TRIGGERS,
+    ("audioDetect", "no_match"):{("llm", "input")} | _ACTION_TRIGGERS,
+    ("logic", "match"):         {("llm", "input")} | _ACTION_TRIGGERS,
+    ("logic", "no_match"):      {("llm", "input")} | _ACTION_TRIGGERS,
+    ("llm", "output"):          {("logic", "input")} | _ACTION_TRIGGERS,
+}
 
 
 def _parse_workflow_json(raw: str):
     """Extract and validate nodes/edges from LLM output. Returns (nodes, edges)."""
+    import re
+
     text = raw.strip()
-    if "```" in text:
-        start = text.find("```")
-        if "json" in text[: start + 10].lower():
-            start = text.find("\n", start) + 1
-        end = text.find("```", start)
-        if end != -1:
-            text = text[start:end]
+
+    # Strip markdown code fences (with or without closing fence)
+    text = re.sub(r"^```\w*\s*", "", text)
+    text = re.sub(r"\s*```\s*$", "", text)
+
+    # Collapse all whitespace (newlines, indentation) to single spaces to help parse pretty-printed JSON
+    text = re.sub(r"\s+", " ", text)
+
+    # Extract the first JSON object { ... } even if there's junk around it
+    brace_start = text.find("{")
+    if brace_start == -1:
+        return [], []
+    # Find matching closing brace by counting depth (skip braces inside strings)
+    depth = 0
+    brace_end = -1
+    in_string = False
+    escape = False
+    for i in range(brace_start, len(text)):
+        c = text[i]
+        if escape:
+            escape = False
+            continue
+        if c == "\\":
+            escape = True
+            continue
+        if c == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                brace_end = i
+                break
+    if brace_end == -1:
+        # No matching close brace — truncated output
+        truncated = text[brace_start:]
+        # Try to close open arrays and braces
+        # Count open brackets
+        open_brackets = truncated.count("[") - truncated.count("]")
+        truncated += "]" * max(0, open_brackets) + "}" * max(0, depth)
+        text = truncated
+    else:
+        text = text[brace_start : brace_end + 1]
+
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
+        logger.warning(f"Workflow JSON parse failed: {text[:300]}")
         return [], []
 
     nodes = data.get("nodes") or []
     edges = data.get("edges") or []
     out_nodes = []
+    node_types: dict[str, str] = {}
     for n in nodes:
         nid = n.get("id") or n.get("nodeId")
         ntype = (n.get("type") or n.get("nodeType") or "").strip()
@@ -527,19 +675,83 @@ def _parse_workflow_json(raw: str):
             continue
         if ntype not in VALID_NODE_TYPES:
             continue
-        out_nodes.append({"id": str(nid), "type": ntype, "data": ndata})
+        nid = str(nid)
+        out_nodes.append({"id": nid, "type": ntype, "data": ndata})
+        node_types[nid] = ntype
+
     out_edges = []
     for e in edges:
-        src = e.get("source") or e.get("from")
-        tgt = e.get("target") or e.get("to")
-        edge_data: dict = {"source": str(src), "target": str(tgt)}
-        if e.get("sourceHandle"):
-            edge_data["sourceHandle"] = str(e["sourceHandle"])
-        if e.get("targetHandle"):
-            edge_data["targetHandle"] = str(e["targetHandle"])
-        if src and tgt:
-            out_edges.append(edge_data)
+        src = str(e.get("source") or e.get("from") or "")
+        tgt = str(e.get("target") or e.get("to") or "")
+        if not src or not tgt or src not in node_types or tgt not in node_types:
+            continue
+        src_handle = str(e.get("sourceHandle") or "")
+        tgt_handle = str(e.get("targetHandle") or "")
+
+        # Validate connection is physically possible
+        src_type = node_types[src]
+        tgt_type = node_types[tgt]
+        allowed = _VALID_CONNECTIONS.get((src_type, src_handle))
+        if allowed and (tgt_type, tgt_handle) not in allowed:
+            logger.warning(f"Rejected invalid edge: {src_type}.{src_handle} → {tgt_type}.{tgt_handle}")
+            continue
+
+        edge_data: dict = {"source": src, "target": tgt}
+        if src_handle:
+            edge_data["sourceHandle"] = src_handle
+        if tgt_handle:
+            edge_data["targetHandle"] = tgt_handle
+        out_edges.append(edge_data)
+
+    # If we got nodes but no edges (truncated output lost the edges), auto-wire them
+    if out_nodes and not out_edges:
+        logger.warning("No edges parsed — auto-wiring nodes in sequence")
+        out_edges = _auto_wire_nodes(out_nodes)
+
     return out_nodes, out_edges
+
+
+# Default output handles for each node type
+_DEFAULT_OUTPUT_HANDLE: dict[str, str] = {
+    "camera": "frames", "video": "frames", "mic": "audio", "visualLlm": "response",
+    "audioLlm": "response", "detection": "match", "audioDetect": "match",
+    "logic": "match", "llm": "output",
+}
+# Default input handles for each node type
+_DEFAULT_INPUT_HANDLE: dict[str, str] = {
+    "visualLlm": "camera", "audioLlm": "audio", "detection": "camera",
+    "audioDetect": "audio", "logic": "input", "llm": "input",
+    "soundAction": "trigger", "logAction": "trigger", "notifyAction": "trigger",
+    "screenshotAction": "trigger", "webhookAction": "trigger",
+}
+
+
+def _auto_wire_nodes(nodes: list[dict]) -> list[dict]:
+    """Connect nodes in order using valid connections. Fallback for truncated output."""
+    edges = []
+    for i in range(len(nodes) - 1):
+        src = nodes[i]
+        tgt = nodes[i + 1]
+        src_handle = _DEFAULT_OUTPUT_HANDLE.get(src["type"], "")
+        tgt_handle = _DEFAULT_INPUT_HANDLE.get(tgt["type"], "")
+        if not src_handle or not tgt_handle:
+            continue
+        # Validate
+        allowed = _VALID_CONNECTIONS.get((src["type"], src_handle))
+        if allowed and (tgt["type"], tgt_handle) not in allowed:
+            # Try alternate handle for detection/logic
+            for alt_handle in ["match", "response", "output", "frames", "audio"]:
+                alt_allowed = _VALID_CONNECTIONS.get((src["type"], alt_handle))
+                if alt_allowed and (tgt["type"], tgt_handle) in alt_allowed:
+                    src_handle = alt_handle
+                    break
+            else:
+                continue
+        edges.append({
+            "source": src["id"], "target": tgt["id"],
+            "sourceHandle": src_handle, "targetHandle": tgt_handle,
+        })
+    return edges
 
 
 async def handle_generate_workflow(cid: str, payload: dict):
@@ -553,35 +765,68 @@ async def handle_generate_workflow(cid: str, payload: dict):
         })
         return
 
-    prompt = GENERATE_WORKFLOW_PROMPT + "\n\nUser description:\n" + description
+    loop = asyncio.get_event_loop()
 
-    try:
-        loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: brain.generate_text(prompt, max_tokens=800),
-        )
-        raw = (result.get("text") or "").strip()
-        nodes, edges = _parse_workflow_json(raw)
-        await manager.send(cid, "workflow_generated", {
-            "nodes": nodes,
-            "edges": edges,
-            "error": None,
-        })
-    except Exception as e:
-        logger.exception("generate_workflow failed: %s", e)
-        await manager.send(cid, "workflow_generated", {
-            "nodes": [],
-            "edges": [],
-            "error": str(e),
-        })
+    # Try up to 2 times — the small model sometimes echoes the template or returns empty arrays
+    MAX_ATTEMPTS = 2
+    for attempt in range(MAX_ATTEMPTS):
+        try:
+            if attempt == 0:
+                prompt = GENERATE_WORKFLOW_PROMPT + "\n\nUser request: " + description
+            else:
+                # Retry with a more direct prompt that puts the user request first
+                prompt = (
+                    f"Create an arcflow pipeline for: {description}\n\n"
+                    "Output ONLY compact JSON on one line. No markdown.\n"
+                    "Use this exact pattern with REAL data (not empty arrays):\n\n"
+                    + GENERATE_WORKFLOW_PROMPT
+                )
+                logger.info("Workflow generation retry (attempt %d)", attempt + 1)
+
+            result = await loop.run_in_executor(
+                None,
+                lambda p=prompt: brain.generate_text(p, max_tokens=2048),
+            )
+            raw = (result.get("text") or "").strip()
+            logger.info(f"Workflow LLM raw output (attempt {attempt+1}): {raw[:300]}")
+            nodes, edges = _parse_workflow_json(raw)
+
+            if nodes:
+                # Success — send it
+                await manager.send(cid, "workflow_generated", {
+                    "nodes": nodes,
+                    "edges": edges,
+                    "error": None,
+                })
+                return
+
+            # Empty result — retry if we have attempts left
+            if attempt < MAX_ATTEMPTS - 1:
+                logger.warning("Workflow generation returned empty nodes, retrying...")
+                continue
+
+            # Final attempt failed
+            await manager.send(cid, "workflow_generated", {
+                "nodes": [],
+                "edges": [],
+                "error": f"Could not generate workflow. Model returned: {raw[:200]}",
+            })
+        except Exception as e:
+            logger.exception("generate_workflow failed (attempt %d): %s", attempt + 1, e)
+            if attempt < MAX_ATTEMPTS - 1:
+                continue
+            await manager.send(cid, "workflow_generated", {
+                "nodes": [],
+                "edges": [],
+                "error": str(e),
+            })
 
 
 # ─── Entry Point ───
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.environ.get("SNAPFLOW_PORT", "8000"))
+    port = int(os.environ.get("ARCFLOW_PORT", "8000"))
     uvicorn.run(
         "main:app",
         host="0.0.0.0",

@@ -17,6 +17,11 @@ export default function LlmNode({ id, selected, data }: NodeProps) {
   const [manualPrompt, setManualPrompt] = useState("");
   const processingRef = useRef(false);
 
+  // Sync state from data prop (e.g. when workflow generator replaces nodes)
+  useEffect(() => {
+    if (data?.systemPrompt != null) setSystemPrompt(data.systemPrompt);
+  }, [data?.systemPrompt]);
+
   const edges = useEdges();
 
   // Find connected upstream node
@@ -104,6 +109,7 @@ export default function LlmNode({ id, selected, data }: NodeProps) {
         type="target"
         position={Position.Left}
         id="input"
+        data-tooltip="input"
         style={{
           background: "#a855f7",
           border: "2px solid #13131a",
@@ -220,6 +226,7 @@ export default function LlmNode({ id, selected, data }: NodeProps) {
         type="source"
         position={Position.Right}
         id="output"
+        data-tooltip="output"
         style={{
           background: "#3b82f6",
           border: "2px solid #13131a",

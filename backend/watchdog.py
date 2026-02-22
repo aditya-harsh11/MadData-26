@@ -22,7 +22,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-logger = logging.getLogger("snapflow.watchdog")
+logger = logging.getLogger("arcflow.watchdog")
 
 # COCO class names (80 classes for YOLO)
 COCO_CLASSES = [

@@ -5,6 +5,7 @@ interface FrameStore {
   setFrame: (nodeId: string, frame: string) => void;
   getFrame: (nodeId: string) => string | undefined;
   removeFrame: (nodeId: string) => void;
+  clearAll: () => void;
 }
 
 export const useFrameStore = create<FrameStore>((set, get) => ({
@@ -17,4 +18,5 @@ export const useFrameStore = create<FrameStore>((set, get) => ({
       const { [nodeId]: _, ...rest } = state.frames;
       return { frames: rest };
     }),
+  clearAll: () => set({ frames: {} }),
 }));

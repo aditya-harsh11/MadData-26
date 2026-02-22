@@ -29,7 +29,7 @@ export default function NodeShell({
 
   return (
     <div
-      className="rounded-xl overflow-hidden"
+      className="rounded-xl overflow-visible"
       style={{
         width,
         background: "#13131a",
@@ -42,7 +42,7 @@ export default function NodeShell({
     >
       {/* Header */}
       <div
-        className="flex items-center gap-2.5 px-4 py-3"
+        className="flex items-center gap-2.5 px-4 py-3 rounded-t-xl overflow-hidden"
         style={{
           background: `linear-gradient(135deg, ${accent}12 0%, transparent 60%)`,
           borderBottom: "1px solid #1e1e2e",

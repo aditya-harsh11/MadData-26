@@ -117,6 +117,26 @@ export class PipelineSocket {
     );
   }
 
+  sendEmail(to: string, subject: string, body: string, nodeId: string) {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "send_email",
+        payload: { to, subject, body, node_id: nodeId },
+      })
+    );
+  }
+
+  sendSms(to: string, body: string, nodeId: string) {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "send_sms",
+        payload: { to, body, node_id: nodeId },
+      })
+    );
+  }
+
   sendGenerateWorkflow(description: string) {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
     this.ws.send(

@@ -48,6 +48,17 @@ export default function LogicNode({ id, selected, data }: NodeProps) {
   const [evalCount, setEvalCount] = useState(0);
   const lastInputRef = useRef<string | null>(null);
 
+  // Sync state from data prop (e.g. when workflow generator replaces nodes)
+  useEffect(() => {
+    if (data?.conditions != null) setConditions(data.conditions);
+  }, [data?.conditions]);
+  useEffect(() => {
+    if (data?.mode != null) setMode(data.mode);
+  }, [data?.mode]);
+  useEffect(() => {
+    if (data?.retrigger != null) setRetrigger(data.retrigger);
+  }, [data?.retrigger]);
+
   const edges = useEdges();
 
   // Find connected source node and its handle
@@ -144,6 +155,7 @@ export default function LogicNode({ id, selected, data }: NodeProps) {
         type="target"
         position={Position.Left}
         id="input"
+        data-tooltip="input"
         style={{
           background: "#a855f7",
           border: "2px solid #13131a",
@@ -272,6 +284,7 @@ export default function LogicNode({ id, selected, data }: NodeProps) {
         type="source"
         position={Position.Right}
         id="match"
+        data-tooltip="match"
         style={{
           background: "#10b981",
           border: "2px solid #13131a",
@@ -282,6 +295,7 @@ export default function LogicNode({ id, selected, data }: NodeProps) {
         type="source"
         position={Position.Right}
         id="no_match"
+        data-tooltip="no match"
         style={{
           background: "#ef4444",
           border: "2px solid #13131a",
@@ -289,19 +303,6 @@ export default function LogicNode({ id, selected, data }: NodeProps) {
         }}
       />
 
-      {/* Handle labels */}
-      <div
-        className="absolute text-[9px] font-mono text-emerald-500/60"
-        style={{ right: 14, top: "37%" }}
-      >
-        match
-      </div>
-      <div
-        className="absolute text-[9px] font-mono text-red-500/60"
-        style={{ right: 14, top: "62%" }}
-      >
-        no match
-      </div>
     </NodeShell>
   );
 }

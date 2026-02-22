@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useRef, useMemo } from "react";
 import { Handle, Position, type NodeProps, useEdges } from "reactflow";
-import { ScanSearch, Loader, CheckCircle, XCircle } from "lucide-react";
+import { ScanSearch, Loader, CheckCircle, XCircle, Eye, EyeOff } from "lucide-react";
 import NodeShell from "./NodeShell";
 import { pipelineSocket } from "@/lib/websocket";
 import { useFrameStore } from "@/lib/frameStore";
@@ -25,9 +25,22 @@ export default function DetectionNode({ id, selected, data }: NodeProps) {
   const [filterText, setFilterText] = useState<string>(data?.filterLabels ?? "");
   const [retrigger, setRetrigger] = useState(data?.retrigger ?? true);
   const [lastMatch, setLastMatch] = useState<boolean | null>(null);
+  const [showBoxes, setShowBoxes] = useState(false);
 
   const processingRef = useRef(false);
   const lastOutputRef = useRef<string | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  // Sync state from data prop (e.g. when workflow generator replaces nodes)
+  useEffect(() => {
+    if (data?.confidence != null) setConfidence(data.confidence);
+  }, [data?.confidence]);
+  useEffect(() => {
+    if (data?.interval != null) setInterval_(data.interval);
+  }, [data?.interval]);
+  useEffect(() => {
+    if (data?.filterLabels != null) setFilterText(data.filterLabels);
+  }, [data?.filterLabels]);
 
   // Parse comma-separated filter into lowercase label list
   const filterLabels = useMemo(() => {
@@ -112,6 +125,75 @@ export default function DetectionNode({ id, selected, data }: NodeProps) {
     };
   }, [connectedCameraId, interval, id, confidence]);
 
+  // ── Bounding box overlay rendering via setInterval ──
+  const detectionsRef = useRef<Detection[]>([]);
+  detectionsRef.current = filteredDetections;
+
+  useEffect(() => {
+    if (!showBoxes || !connectedCameraId) return;
+
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    let lastFrameData = "";
+
+    const img = new Image();
+    let drawing = false;
+
+    const drawFrame = () => {
+      if (drawing) return;
+      const frame = useFrameStore.getState().getFrame(connectedCameraId);
+      if (!frame) return;
+
+      drawing = true;
+      img.onload = () => {
+        const w = canvas.width;
+        const h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+
+        // Draw bounding boxes
+        const dets = detectionsRef.current;
+        for (const det of dets) {
+          if (!det.bbox) continue;
+          const [x1, y1, x2, y2] = det.bbox;
+          const bx = x1 * w;
+          const by = y1 * h;
+          const bw = (x2 - x1) * w;
+          const bh = (y2 - y1) * h;
+
+          const color = det.confidence >= 0.75 ? "#10b981" : det.confidence >= 0.5 ? "#f59e0b" : "#ef4444";
+
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(bx, by, bw, bh);
+
+          // Label background
+          const label = `${det.label} ${(det.confidence * 100).toFixed(0)}%`;
+          ctx.font = "bold 11px monospace";
+          const textWidth = ctx.measureText(label).width;
+          ctx.fillStyle = color;
+          ctx.fillRect(bx, by - 18, textWidth + 8, 18);
+
+          // Label text
+          ctx.fillStyle = "#000";
+          ctx.fillText(label, bx + 4, by - 5);
+        }
+        drawing = false;
+      };
+      img.onerror = () => { drawing = false; };
+      img.src = "data:image/jpeg;base64," + frame;
+    };
+
+    // Draw immediately then on interval
+    drawFrame();
+    const timer = setInterval(drawFrame, 150);
+
+    return () => clearInterval(timer);
+  }, [showBoxes, connectedCameraId]);
+
   const confColor = (c: number) => {
     if (c >= 0.75) return "#10b981";
     if (c >= 0.5) return "#f59e0b";
@@ -132,6 +214,7 @@ export default function DetectionNode({ id, selected, data }: NodeProps) {
         type="target"
         position={Position.Left}
         id="camera"
+        data-tooltip="camera"
         style={{
           background: "#22d3ee",
           border: "2px solid #13131a",
@@ -165,7 +248,42 @@ export default function DetectionNode({ id, selected, data }: NodeProps) {
             No camera connected
           </span>
         )}
+        {connectedCameraId && (
+          <button
+            onClick={() => setShowBoxes((v) => !v)}
+            className="ml-auto flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-mono transition-colors nodrag"
+            style={{
+              background: showBoxes ? "#f9731625" : "#1e1e2e",
+              color: showBoxes ? "#f97316" : "#64748b",
+              border: `1px solid ${showBoxes ? "#f9731640" : "#2a2a3a"}`,
+            }}
+            title={showBoxes ? "Hide bounding boxes" : "Show bounding boxes"}
+          >
+            {showBoxes ? <Eye size={11} /> : <EyeOff size={11} />}
+            Boxes
+          </button>
+        )}
       </div>
+
+      {/* Bounding Box Preview */}
+      {showBoxes && connectedCameraId && (
+        <div
+          className="relative rounded-lg overflow-hidden mb-3"
+          style={{ background: "#0a0a0f", aspectRatio: "16/9" }}
+        >
+          <canvas
+            ref={overlayCanvasRef}
+            width={640}
+            height={360}
+            className="w-full h-full object-cover"
+          />
+          {filteredDetections.length > 0 && (
+            <div className="absolute top-1.5 left-1.5 bg-black/70 text-[9px] text-orange-400 px-1.5 py-0.5 rounded font-mono">
+              {filteredDetections.length} object{filteredDetections.length !== 1 ? "s" : ""}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Confidence Threshold */}
       <div className="flex items-center gap-3 mb-2">
@@ -324,6 +442,7 @@ export default function DetectionNode({ id, selected, data }: NodeProps) {
         type="source"
         position={Position.Right}
         id="match"
+        data-tooltip="match"
         style={{
           background: "#10b981",
           border: "2px solid #13131a",
@@ -334,6 +453,7 @@ export default function DetectionNode({ id, selected, data }: NodeProps) {
         type="source"
         position={Position.Right}
         id="no_match"
+        data-tooltip="no match"
         style={{
           background: "#ef4444",
           border: "2px solid #13131a",
@@ -341,19 +461,6 @@ export default function DetectionNode({ id, selected, data }: NodeProps) {
         }}
       />
 
-      {/* Handle labels */}
-      <div
-        className="absolute text-[9px] font-mono text-emerald-500/60"
-        style={{ right: 14, top: "37%" }}
-      >
-        match
-      </div>
-      <div
-        className="absolute text-[9px] font-mono text-red-500/60"
-        style={{ right: 14, top: "62%" }}
-      >
-        no match
-      </div>
     </NodeShell>
   );
 }

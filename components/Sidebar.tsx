@@ -7,13 +7,20 @@ import {
   GitBranch,
   MessageSquare,
   ScanSearch,
-  Zap,
   Cpu,
   Wifi,
   WifiOff,
   Mic,
   AudioLines,
   Ear,
+  Film,
+  Volume2,
+  FileText,
+  Bell,
+  Aperture,
+  Webhook,
+  Mail,
+  MessageCircle,
 } from "lucide-react";
 import { NODE_CATALOG, type NodeTypeInfo } from "@/lib/types";
 
@@ -23,10 +30,17 @@ const iconMap: Record<string, React.ReactNode> = {
   Eye: <Eye size={18} />,
   GitBranch: <GitBranch size={18} />,
   MessageSquare: <MessageSquare size={18} />,
-  Zap: <Zap size={18} />,
   Mic: <Mic size={18} />,
   AudioLines: <AudioLines size={18} />,
   Ear: <Ear size={18} />,
+  Film: <Film size={18} />,
+  Volume2: <Volume2 size={18} />,
+  FileText: <FileText size={18} />,
+  Bell: <Bell size={18} />,
+  Aperture: <Aperture size={18} />,
+  Webhook: <Webhook size={18} />,
+  Mail: <Mail size={18} />,
+  MessageCircle: <MessageCircle size={18} />,
 };
 
 const categoryLabels: Record<string, string> = {
@@ -71,7 +85,7 @@ export default function Sidebar({ backendConnected }: SidebarProps) {
       {/* Logo */}
       <div
         className="flex items-center gap-3 px-5 py-5 border-b"
-        style={{ borderColor: "#1e1e2e" }}
+        style={{ borderColor: "#1e1e2e", WebkitAppRegion: "drag" } as React.CSSProperties}
       >
         <div
           className="flex items-center justify-center w-10 h-10 rounded-lg"
@@ -83,11 +97,11 @@ export default function Sidebar({ backendConnected }: SidebarProps) {
           <Cpu size={20} className="text-cyan-400" />
         </div>
         <div>
-          <h1 className="text-base font-bold text-slate-200 tracking-tight">
-            SnapFlow
+          <h1 className="text-xl font-bold text-slate-200 tracking-tight" style={{ fontFamily: "'Urbanist', sans-serif" }}>
+            arcflow
           </h1>
           <p className="text-[11px] text-slate-500 font-mono">
-            Qualcomm NPU Pipeline
+            visual AI pipeline editor
           </p>
         </div>
       </div>

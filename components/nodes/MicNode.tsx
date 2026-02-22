@@ -6,6 +6,13 @@ import { Mic, Play, Square } from "lucide-react";
 import NodeShell from "./NodeShell";
 import { AudioCapture } from "@/lib/audioCapture";
 import { useAudioStore } from "@/lib/audioStore";
+import { useWorkflowStore } from "@/lib/workflowStore";
+import {
+  isSwitching,
+  getSwitchFromWorkflowId,
+  parkCapture,
+  reclaimCapture,
+} from "@/lib/captureRegistry";
 
 export default function MicNode({ id, selected }: NodeProps) {
   const captureRef = useRef<AudioCapture | null>(null);
@@ -18,8 +25,76 @@ export default function MicNode({ id, selected }: NodeProps) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string>("");
 
-  // Enumerate audio input devices
+  // ── Combined reclaim + cleanup effect (must be defined BEFORE enumerate) ──
   useEffect(() => {
+    // Try to reclaim parked capture on mount
+    const wfId = useWorkflowStore.getState().activeWorkflowId;
+    if (wfId) {
+      const parked = reclaimCapture(wfId, id);
+      if (parked && parked.type === "mic") {
+        const capture = parked.capture;
+
+        // Remove namespaced audio key
+        useAudioStore.getState().removeAudio(`${wfId}::${id}`);
+
+        // Rewire callback to plain key
+        capture.stop();
+        capture.startCapture((base64Pcm) => {
+          setChunkCount((c) => c + 1);
+          useAudioStore.getState().setAudio(id, base64Pcm);
+        });
+
+        captureRef.current = capture;
+        setActive(true);
+
+        // Restart level meter animation
+        const updateLevel = () => {
+          if (captureRef.current) {
+            const l = captureRef.current.getLevel();
+            levelRef.current = l;
+            setLevel(l);
+            animFrameRef.current = requestAnimationFrame(updateLevel);
+          }
+        };
+        animFrameRef.current = requestAnimationFrame(updateLevel);
+      }
+    }
+
+    // Cleanup: always re-park instead of destroying.
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
+
+      const capture = captureRef.current;
+      if (!capture) return;
+      captureRef.current = null;
+
+      const parkWfId = isSwitching()
+        ? getSwitchFromWorkflowId()
+        : useWorkflowStore.getState().activeWorkflowId;
+
+      if (parkWfId) {
+        useAudioStore.getState().removeAudio(id);
+        capture.stop();
+        capture.startCapture((base64Pcm) => {
+          useAudioStore.getState().setAudio(`${parkWfId}::${id}`, base64Pcm);
+        });
+        parkCapture(parkWfId, id, {
+          type: "mic",
+          capture,
+          nodeId: id,
+          workflowId: parkWfId,
+        });
+      } else {
+        capture.destroy();
+        useAudioStore.getState().removeAudio(id);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  // ── Enumerate audio input devices (skipped if we reclaimed a capture) ──
+  useEffect(() => {
+    if (captureRef.current) return; // Already have a capture from reclaim
     const enumerate = async () => {
       try {
         const tempStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -76,14 +151,6 @@ export default function MicNode({ id, selected }: NodeProps) {
     setLevel(0);
     useAudioStore.getState().removeAudio(id);
   }, [id]);
-
-  useEffect(() => {
-    return () => {
-      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current);
-      captureRef.current?.destroy();
-      useAudioStore.getState().removeAudio(id);
-    };
-  }, [id, selectedDevice]);
 
   // Clamp level for display (0-100%)
   const levelPct = Math.min(100, Math.round(level * 300));
@@ -171,6 +238,7 @@ export default function MicNode({ id, selected }: NodeProps) {
         type="source"
         position={Position.Right}
         id="audio"
+        data-tooltip="audio"
         style={{
           background: "#06b6d4",
           border: "2px solid #13131a",

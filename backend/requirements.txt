@@ -9,3 +9,4 @@ python-multipart>=0.0.9
 nexaai>=1.0.0
 qai-hub>=0.40.0
 onnx>=1.16.0
+twilio>=9.0.0

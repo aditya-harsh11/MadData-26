@@ -9,6 +9,7 @@ interface NodeOutputStore {
   getOutput: (key: string) => string | undefined;
   getVersion: (key: string) => number;
   clearOutput: (key: string) => void;
+  clearAll: () => void;
 }
 
 export const useNodeOutputStore = create<NodeOutputStore>((set, get) => ({
@@ -27,4 +28,8 @@ export const useNodeOutputStore = create<NodeOutputStore>((set, get) => ({
       const { [key]: _v, ...restVersions } = state.versions;
       return { outputs: restOutputs, versions: restVersions };
     }),
+  clearAll: () => {
+    _seq = 0;
+    set({ outputs: {}, versions: {} });
+  },
 }));

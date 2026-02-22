@@ -12,7 +12,7 @@ import logging
 import subprocess
 import httpx
 
-logger = logging.getLogger("snapflow.reasoning")
+logger = logging.getLogger("arcflow.reasoning")
 
 NEXA_API = "http://127.0.0.1:18181"
 VLM_MODEL = "NexaAI/OmniNeural-4B"

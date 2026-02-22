@@ -60,6 +60,17 @@ export default function AudioDetectNode({ id, selected, data }: NodeProps) {
   const lastSeenAudioRef = useRef<string>("");
   const lastOutputRef = useRef<string | null>(null);
 
+  // Sync state from data prop (e.g. when workflow generator replaces nodes)
+  useEffect(() => {
+    if (data?.confidence != null) setConfidence(data.confidence);
+  }, [data?.confidence]);
+  useEffect(() => {
+    if (data?.listenDuration != null) setListenDuration(data.listenDuration);
+  }, [data?.listenDuration]);
+  useEffect(() => {
+    if (data?.filterLabels != null) setFilterText(data.filterLabels);
+  }, [data?.filterLabels]);
+
   // Keep phaseRef in sync
   useEffect(() => {
     phaseRef.current = phase;
@@ -225,6 +236,7 @@ export default function AudioDetectNode({ id, selected, data }: NodeProps) {
         type="target"
         position={Position.Left}
         id="audio"
+        data-tooltip="audio"
         style={{
           background: "#06b6d4",
           border: "2px solid #13131a",
@@ -459,6 +471,7 @@ export default function AudioDetectNode({ id, selected, data }: NodeProps) {
         type="source"
         position={Position.Right}
         id="match"
+        data-tooltip="match"
         style={{
           background: "#10b981",
           border: "2px solid #13131a",
@@ -469,6 +482,7 @@ export default function AudioDetectNode({ id, selected, data }: NodeProps) {
         type="source"
         position={Position.Right}
         id="no_match"
+        data-tooltip="no match"
         style={{
           background: "#ef4444",
           border: "2px solid #13131a",

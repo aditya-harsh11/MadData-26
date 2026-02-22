@@ -15,26 +15,52 @@ import ReactFlow, {
   BackgroundVariant,
 } from "reactflow";
 import "reactflow/dist/style.css";
+import { FolderOpen, ChevronLeft } from "lucide-react";
 
 import Sidebar from "./Sidebar";
+import WorkflowPanel from "./WorkflowPanel";
+import { GitBranch } from "lucide-react";
 import CameraNode from "./nodes/CameraNode";
+import VideoNode from "./nodes/VideoNode";
 import DetectionNode from "./nodes/DetectionNode";
 import VisualLlmNode from "./nodes/VisualLlmNode";
 import LogicNode from "./nodes/LogicNode";
 import LlmNode from "./nodes/LlmNode";
-import ActionNode from "./nodes/ActionNode";
+import SoundAlertNode from "./nodes/SoundAlertNode";
+import LogNode from "./nodes/LogNode";
+import NotifyNode from "./nodes/NotifyNode";
+import ScreenshotNode from "./nodes/ScreenshotNode";
+import WebhookNode from "./nodes/WebhookNode";
+import EmailNode from "./nodes/EmailNode";
+import SmsNode from "./nodes/SmsNode";
 import MicNode from "./nodes/MicNode";
 import AudioDetectNode from "./nodes/AudioDetectNode";
 import AudioLlmNode from "./nodes/AudioLlmNode";
 import { pipelineSocket } from "@/lib/websocket";
+import { useWorkflowStore, type SavedWorkflow } from "@/lib/workflowStore";
+import { useFrameStore } from "@/lib/frameStore";
+import { useAudioStore } from "@/lib/audioStore";
+import { useNodeOutputStore } from "@/lib/nodeOutputStore";
+import {
+  prepareSwitch,
+  completeSwitch,
+  destroyWorkflowCaptures,
+} from "@/lib/captureRegistry";
 
 const nodeTypes = {
   camera: CameraNode,
+  video: VideoNode,
   detection: DetectionNode,
   visualLlm: VisualLlmNode,
   logic: LogicNode,
   llm: LlmNode,
-  action: ActionNode,
+  soundAction: SoundAlertNode,
+  logAction: LogNode,
+  notifyAction: NotifyNode,
+  screenshotAction: ScreenshotNode,
+  webhookAction: WebhookNode,
+  emailAction: EmailNode,
+  smsAction: SmsNode,
   mic: MicNode,
   audioDetect: AudioDetectNode,
   audioLlm: AudioLlmNode,
@@ -79,10 +105,10 @@ const defaultNodes: Node[] = [
     },
   },
   {
-    id: "action-1",
-    type: "action",
+    id: "log-1",
+    type: "logAction",
     position: { x: 1880, y: 200 },
-    data: { actionType: "log" },
+    data: {},
   },
 ];
 
@@ -127,7 +153,7 @@ const defaultEdges: Edge[] = [
     id: "e-logic-action",
     source: "logic-1",
     sourceHandle: "match",
-    target: "action-1",
+    target: "log-1",
     targetHandle: "trigger",
     animated: true,
     style: { stroke: "#10b98150" },
@@ -137,18 +163,92 @@ const defaultEdges: Edge[] = [
 let nodeId = 100;
 const getNewId = () => `node-${nodeId++}`;
 
+/** Reset nodeId counter above max numeric ID found in nodes */
+function syncNodeIdCounter(nodes: Node[]) {
+  const maxId = nodes.reduce((max, n) => {
+    const match = n.id.match(/(\d+)/);
+    return match ? Math.max(max, parseInt(match[1], 10)) : max;
+  }, 0);
+  nodeId = Math.max(nodeId, maxId + 1);
+}
+
 export default function Canvas() {
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [reactFlowInstance, setReactFlowInstance] =
     useState<ReactFlowInstance | null>(null);
-  const [nodes, setNodes, onNodesChange] = useNodesState(defaultNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(defaultEdges);
+  const [nodes, setNodes, onNodesChange] = useNodesState([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [backendConnected, setBackendConnected] = useState(false);
   const [workflowInput, setWorkflowInput] = useState("");
   const [generateLoading, setGenerateLoading] = useState(false);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [workflowPanelOpen, setWorkflowPanelOpen] = useState(false);
 
-  // Connect to backend WebSocket
+  // Track whether we've finished initial load (suppress autosave until then)
+  const initializedRef = useRef(false);
+  // Suppress autosave during workflow switches
+  const suppressAutosaveRef = useRef(false);
+
+  const {
+    workflows,
+    activeWorkflowId,
+    loadFromStorage,
+    createWorkflow,
+    autosave,
+    setActiveWorkflowId,
+    deleteWorkflow,
+    renameWorkflow,
+  } = useWorkflowStore();
+
+  // ─── Bootstrap: load workflows or create default ───
+  useEffect(() => {
+    loadFromStorage();
+    const store = useWorkflowStore.getState();
+
+    if (store.workflows.length === 0) {
+      // First time — create default workflow
+      const id = store.createWorkflow("Default Workflow", defaultNodes, defaultEdges);
+      setNodes(defaultNodes);
+      setEdges(defaultEdges);
+      syncNodeIdCounter(defaultNodes);
+    } else {
+      // Load the active workflow (or first one)
+      const activeId = store.activeWorkflowId || store.workflows[0].id;
+      const wf = store.workflows.find((w) => w.id === activeId) || store.workflows[0];
+      if (wf) {
+        setNodes(wf.nodes);
+        setEdges(wf.edges);
+        syncNodeIdCounter(wf.nodes);
+        if (store.activeWorkflowId !== wf.id) {
+          store.setActiveWorkflowId(wf.id);
+        }
+      }
+    }
+
+    // Mark init complete after a tick so the first setNodes/setEdges settles
+    setTimeout(() => {
+      initializedRef.current = true;
+    }, 100);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ─── Autosave: debounce writes to active workflow ───
+  const autosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!initializedRef.current) return;
+    if (suppressAutosaveRef.current) return;
+
+    if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    autosaveTimerRef.current = setTimeout(() => {
+      autosave(nodes, edges);
+    }, 800);
+
+    return () => {
+      if (autosaveTimerRef.current) clearTimeout(autosaveTimerRef.current);
+    };
+  }, [nodes, edges, autosave]);
+
+  // ─── WebSocket ───
   useEffect(() => {
     pipelineSocket.connect();
 
@@ -194,6 +294,7 @@ export default function Canvas() {
           }));
         setNodes(newNodes);
         setEdges(newEdges);
+        syncNodeIdCounter(newNodes);
       }
     };
     pipelineSocket.on("workflow_generated", generatedHandler);
@@ -207,10 +308,16 @@ export default function Canvas() {
 
   const generateWorkflow = useCallback(() => {
     if (!backendConnected || !workflowInput.trim()) return;
+    if (nodes.length > 0) {
+      const ok = window.confirm(
+        "This will replace your current workflow. Continue?"
+      );
+      if (!ok) return;
+    }
     setGenerateLoading(true);
     setGenerateError(null);
     pipelineSocket.sendGenerateWorkflow(workflowInput.trim());
-  }, [backendConnected, workflowInput]);
+  }, [backendConnected, workflowInput, nodes.length]);
 
   const onConnect = useCallback(
     (params: Connection) =>
@@ -257,6 +364,121 @@ export default function Canvas() {
     [reactFlowInstance, setNodes]
   );
 
+  // ─── Workflow management ───
+
+  /** Full store clear — used only for delete (not switch). */
+  const clearAllStores = useCallback(() => {
+    useFrameStore.getState().clearAll();
+    useAudioStore.getState().clearAll();
+    useNodeOutputStore.getState().clearAll();
+  }, []);
+
+  const handleSwitchWorkflow = useCallback(
+    (workflow: SavedWorkflow) => {
+      if (workflow.id === activeWorkflowId) return;
+
+      // Suppress autosave during the switch
+      suppressAutosaveRef.current = true;
+
+      // Signal nodes to park captures instead of destroying them
+      prepareSwitch(activeWorkflowId!);
+
+      // Clear canvas to unmount active node components
+      setNodes([]);
+      setEdges([]);
+
+      setTimeout(() => {
+        // Only clear node outputs, NOT frames/audio (parked captures keep writing)
+        useNodeOutputStore.getState().clearAll();
+
+        // Set active workflow BEFORE mounting new nodes (so reclaim reads correct ID)
+        setActiveWorkflowId(workflow.id);
+        setNodes(workflow.nodes);
+        setEdges(workflow.edges);
+        syncNodeIdCounter(workflow.nodes);
+
+        completeSwitch();
+
+        // Re-enable autosave after the new nodes settle
+        setTimeout(() => {
+          suppressAutosaveRef.current = false;
+        }, 200);
+      }, 50);
+    },
+    [activeWorkflowId, setNodes, setEdges, setActiveWorkflowId]
+  );
+
+  const handleNewWorkflow = useCallback(() => {
+    suppressAutosaveRef.current = true;
+
+    // Signal nodes to park captures
+    if (activeWorkflowId) prepareSwitch(activeWorkflowId);
+
+    // Clear canvas
+    setNodes([]);
+    setEdges([]);
+
+    setTimeout(() => {
+      useNodeOutputStore.getState().clearAll();
+
+      // Determine name
+      const existingCount = useWorkflowStore.getState().workflows.length;
+      const name = `Workflow ${existingCount + 1}`;
+
+      // Create with empty canvas
+      createWorkflow(name, [], []);
+      // Nodes/edges already []
+
+      completeSwitch();
+
+      setTimeout(() => {
+        suppressAutosaveRef.current = false;
+      }, 200);
+    }, 50);
+  }, [setNodes, setEdges, createWorkflow, activeWorkflowId]);
+
+  const handleDeleteWorkflow = useCallback(
+    (id: string) => {
+      // Destroy all parked captures for this workflow
+      destroyWorkflowCaptures(id);
+
+      const nextId = deleteWorkflow(id);
+
+      if (id === activeWorkflowId) {
+        suppressAutosaveRef.current = true;
+        setNodes([]);
+        setEdges([]);
+
+        setTimeout(() => {
+          clearAllStores();
+
+          if (nextId) {
+            // Switch to the next workflow
+            const store = useWorkflowStore.getState();
+            const wf = store.workflows.find((w) => w.id === nextId);
+            if (wf) {
+              setActiveWorkflowId(wf.id);
+              setNodes(wf.nodes);
+              setEdges(wf.edges);
+              syncNodeIdCounter(wf.nodes);
+            }
+          } else {
+            // No workflows left — create a fresh default
+            createWorkflow("Default Workflow", defaultNodes, defaultEdges);
+            setNodes(defaultNodes);
+            setEdges(defaultEdges);
+            syncNodeIdCounter(defaultNodes);
+          }
+
+          setTimeout(() => {
+            suppressAutosaveRef.current = false;
+          }, 200);
+        }, 50);
+      }
+    },
+    [activeWorkflowId, deleteWorkflow, setNodes, setEdges, clearAllStores, createWorkflow, setActiveWorkflowId]
+  );
+
   return (
     <div className="flex h-full w-full">
       <Sidebar backendConnected={backendConnected} />
@@ -268,17 +490,15 @@ export default function Canvas() {
           style={{
             background:
               "linear-gradient(180deg, #0a0a0fcc 0%, transparent 100%)",
-          }}
+            WebkitAppRegion: "drag",
+          } as React.CSSProperties}
         >
           <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-400 font-medium">
-              Pipeline Editor
-            </span>
-            <span className="text-[9px] text-slate-600 font-mono">
+            <span className="text-[11px] text-slate-500 font-mono">
               {nodes.length} nodes &middot; {edges.length} connections
             </span>
           </div>
-          <div className="flex items-center gap-2 flex-1 max-w-2xl">
+          <div className="flex items-center gap-2 flex-1 max-w-2xl" style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}>
             <input
               type="text"
               placeholder="Describe a workflow (e.g. monitor my desk for a coffee cup and alert me)"
@@ -306,27 +526,6 @@ export default function Canvas() {
             >
               {generateLoading ? "Generating..." : "Generate workflow"}
             </button>
-            <div
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium"
-              style={{
-                background: backendConnected ? "#10b98112" : "#ef444412",
-                color: backendConnected ? "#10b981" : "#ef4444",
-                border: `1px solid ${
-                  backendConnected ? "#10b98120" : "#ef444420"
-                }`,
-              }}
-            >
-              <div
-                className="w-1.5 h-1.5 rounded-full"
-                style={{
-                  background: backendConnected ? "#10b981" : "#ef4444",
-                  boxShadow: backendConnected
-                    ? "0 0 4px #10b981"
-                    : undefined,
-                }}
-              />
-              {backendConnected ? "AI Backend Online" : "Backend Offline"}
-            </div>
           </div>
         </div>
 
@@ -334,6 +533,24 @@ export default function Canvas() {
           <div className="absolute top-11 left-4 right-4 z-20 nodrag px-3 py-2 rounded-md text-xs text-red-400 border border-red-500/30 bg-red-950/30">
             {generateError}
           </div>
+        )}
+
+        {/* Workflow panel toggle tab — right edge */}
+        {!workflowPanelOpen && (
+          <button
+            onClick={() => setWorkflowPanelOpen(true)}
+            className="absolute right-0 top-1/2 -translate-y-1/2 z-10 flex items-center gap-1.5 py-3 pl-2 pr-1 rounded-l-lg transition-colors hover:bg-[#1a1a25]"
+            style={{
+              background: "#13131a",
+              borderTop: "1px solid #282838",
+              borderLeft: "1px solid #282838",
+              borderBottom: "1px solid #282838",
+            }}
+            title="Open Workflows"
+          >
+            <FolderOpen size={14} className="text-slate-500" />
+            <ChevronLeft size={12} className="text-slate-600" />
+          </button>
         )}
 
         <ReactFlow
@@ -351,6 +568,7 @@ export default function Canvas() {
           fitViewOptions={{ padding: 0.2 }}
           snapToGrid
           snapGrid={[20, 20]}
+          connectionRadius={25}
           noDragClassName="nodrag"
           noWheelClassName="nowheel"
           edgesUpdatable
@@ -392,11 +610,18 @@ export default function Canvas() {
             nodeColor={(node) => {
               const colors: Record<string, string> = {
                 camera: "#22d3ee",
+                video: "#22d3ee",
                 detection: "#f97316",
                 visualLlm: "#a855f7",
                 logic: "#f59e0b",
                 llm: "#3b82f6",
-                action: "#10b981",
+                soundAction: "#f97316",
+                logAction: "#10b981",
+                notifyAction: "#eab308",
+                screenshotAction: "#06b6d4",
+                webhookAction: "#8b5cf6",
+                emailAction: "#3b82f6",
+                smsAction: "#14b8a6",
                 mic: "#06b6d4",
                 audioDetect: "#8b5cf6",
                 audioLlm: "#ec4899",
@@ -406,6 +631,19 @@ export default function Canvas() {
           />
         </ReactFlow>
       </div>
+
+      {/* Workflow Manager Panel */}
+      <WorkflowPanel
+        isOpen={workflowPanelOpen}
+        onToggle={() => setWorkflowPanelOpen(false)}
+        onSwitchWorkflow={handleSwitchWorkflow}
+        onNewWorkflow={handleNewWorkflow}
+        onDeleteWorkflow={handleDeleteWorkflow}
+        onRenameWorkflow={renameWorkflow}
+        activeWorkflowId={activeWorkflowId}
+        workflows={workflows}
+        canvasNodes={nodes}
+      />
     </div>
   );
 }

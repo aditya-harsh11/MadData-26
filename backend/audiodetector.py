@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-logger = logging.getLogger("snapflow.audiodetector")
+logger = logging.getLogger("arcflow.audiodetector")
 
 # ─── Mel-spectrogram constants ───
 SAMPLE_RATE = 16000

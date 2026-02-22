@@ -95,6 +95,10 @@ export class FrameCapture {
     this.onFrame = null;
   }
 
+  getStream(): MediaStream | null {
+    return this.stream;
+  }
+
   getVideoElement(): HTMLVideoElement | null {
     return this.video;
   }

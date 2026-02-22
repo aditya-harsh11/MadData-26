@@ -6,6 +6,13 @@ import { Camera, Play, Square } from "lucide-react";
 import NodeShell from "./NodeShell";
 import { FrameCapture } from "@/lib/frameCapture";
 import { useFrameStore } from "@/lib/frameStore";
+import { useWorkflowStore } from "@/lib/workflowStore";
+import {
+  isSwitching,
+  getSwitchFromWorkflowId,
+  parkCapture,
+  reclaimCapture,
+} from "@/lib/captureRegistry";
 
 export default function CameraNode({ id, selected }: NodeProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -17,17 +24,83 @@ export default function CameraNode({ id, selected }: NodeProps) {
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDevice, setSelectedDevice] = useState<string>("");
 
-  // Enumerate video input devices
+  // ── Combined reclaim + cleanup effect (must be defined BEFORE enumerate) ──
   useEffect(() => {
+    // Try to reclaim a parked capture on mount
+    const wfId = useWorkflowStore.getState().activeWorkflowId;
+    if (wfId) {
+      const parked = reclaimCapture(wfId, id);
+      if (parked && parked.type === "camera") {
+        const capture = parked.capture;
+
+        // Remove namespaced frame key
+        useFrameStore.getState().removeFrame(`${wfId}::${id}`);
+
+        // Rewire callback to plain key
+        capture.stop();
+        capture.startCapture((base64) => {
+          setFrameCount((c) => c + 1);
+          useFrameStore.getState().setFrame(id, base64);
+        });
+
+        captureRef.current = capture;
+
+        // Connect stream to preview video
+        if (videoRef.current) {
+          const stream = capture.getStream();
+          if (stream) {
+            videoRef.current.srcObject = stream;
+            videoRef.current.play().catch(() => {});
+          }
+        }
+
+        setActive(true);
+      }
+    }
+
+    // Cleanup: always re-park instead of destroying.
+    // This handles workflow switches, React strict mode re-mounts, AND node deletion.
+    // Parked captures are cleaned up by destroyWorkflowCaptures on workflow delete.
+    return () => {
+      const capture = captureRef.current;
+      if (!capture) return;
+      captureRef.current = null;
+
+      // Determine which workflow to park under
+      const parkWfId = isSwitching()
+        ? getSwitchFromWorkflowId()
+        : useWorkflowStore.getState().activeWorkflowId;
+
+      if (parkWfId) {
+        useFrameStore.getState().removeFrame(id);
+        capture.stop();
+        capture.startCapture((base64) => {
+          useFrameStore.getState().setFrame(`${parkWfId}::${id}`, base64);
+        });
+        parkCapture(parkWfId, id, {
+          type: "camera",
+          capture,
+          nodeId: id,
+          workflowId: parkWfId,
+        });
+      } else {
+        capture.destroy();
+        useFrameStore.getState().removeFrame(id);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  // ── Enumerate video input devices (skipped if we reclaimed a capture) ──
+  useEffect(() => {
+    if (captureRef.current) return; // Already have a capture from reclaim
     const enumerate = async () => {
       try {
-        // Need a brief getUserMedia call to get labeled devices
         const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
         tempStream.getTracks().forEach((t) => t.stop());
         const all = await navigator.mediaDevices.enumerateDevices();
         setDevices(all.filter((d) => d.kind === "videoinput"));
       } catch {
-        // Permission denied — we'll get unlabeled devices
         try {
           const all = await navigator.mediaDevices.enumerateDevices();
           setDevices(all.filter((d) => d.kind === "videoinput"));
@@ -50,7 +123,7 @@ export default function CameraNode({ id, selected }: NodeProps) {
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
-        videoRef.current.play();
+        videoRef.current.play().catch(() => {});
       }
 
       capture.startCapture((base64) => {
@@ -73,13 +146,6 @@ export default function CameraNode({ id, selected }: NodeProps) {
     }
     setActive(false);
     useFrameStore.getState().removeFrame(id);
-  }, [id]);
-
-  useEffect(() => {
-    return () => {
-      captureRef.current?.destroy();
-      useFrameStore.getState().removeFrame(id);
-    };
   }, [id]);
 
   return (
@@ -180,6 +246,7 @@ export default function CameraNode({ id, selected }: NodeProps) {
         type="source"
         position={Position.Right}
         id="frames"
+        data-tooltip="frames"
         style={{
           background: "#22d3ee",
           border: "2px solid #13131a",

@@ -5,6 +5,7 @@ interface AudioStore {
   setAudio: (nodeId: string, base64: string) => void;
   getAudio: (nodeId: string) => string | undefined;
   removeAudio: (nodeId: string) => void;
+  clearAll: () => void;
 }
 
 export const useAudioStore = create<AudioStore>((set, get) => ({
@@ -17,4 +18,5 @@ export const useAudioStore = create<AudioStore>((set, get) => ({
       const { [nodeId]: _, ...rest } = state.audio;
       return { audio: rest };
     }),
+  clearAll: () => set({ audio: {} }),
 }));

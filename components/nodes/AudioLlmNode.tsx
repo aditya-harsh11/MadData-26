@@ -52,6 +52,14 @@ export default function AudioLlmNode({ id, selected, data }: NodeProps) {
   const lastSeenAudioRef = useRef<string>("");
   const promptRef = useRef(prompt);
 
+  // Sync state from data prop (e.g. when workflow generator replaces nodes)
+  useEffect(() => {
+    if (data?.prompt != null) setPrompt(data.prompt);
+  }, [data?.prompt]);
+  useEffect(() => {
+    if (data?.listenDuration != null) setListenDuration(data.listenDuration);
+  }, [data?.listenDuration]);
+
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
@@ -166,6 +174,7 @@ export default function AudioLlmNode({ id, selected, data }: NodeProps) {
         type="target"
         position={Position.Left}
         id="audio"
+        data-tooltip="audio"
         style={{
           background: "#06b6d4",
           border: "2px solid #13131a",
@@ -320,6 +329,7 @@ export default function AudioLlmNode({ id, selected, data }: NodeProps) {
         type="source"
         position={Position.Right}
         id="response"
+        data-tooltip="response"
         style={{
           background: "#ec4899",
           border: "2px solid #13131a",

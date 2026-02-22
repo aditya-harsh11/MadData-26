@@ -21,6 +21,14 @@ export default function VisualLlmNode({ id, selected, data }: NodeProps) {
   const processingRef = useRef(false);
   const lastTriggerVersionRef = useRef(0);
 
+  // Sync state from data prop (e.g. when workflow generator replaces nodes)
+  useEffect(() => {
+    if (data?.prompt != null) setPrompt(data.prompt);
+  }, [data?.prompt]);
+  useEffect(() => {
+    if (data?.interval != null) setInterval_(data.interval);
+  }, [data?.interval]);
+
   useEffect(() => {
     promptRef.current = prompt;
   }, [prompt]);
@@ -136,6 +144,7 @@ export default function VisualLlmNode({ id, selected, data }: NodeProps) {
         type="target"
         position={Position.Left}
         id="camera"
+        data-tooltip="camera"
         style={{
           background: "#22d3ee",
           border: "2px solid #13131a",
@@ -148,6 +157,7 @@ export default function VisualLlmNode({ id, selected, data }: NodeProps) {
         type="target"
         position={Position.Left}
         id="trigger"
+        data-tooltip="trigger"
         style={{
           background: "#10b981",
           border: "2px solid #13131a",
@@ -155,19 +165,6 @@ export default function VisualLlmNode({ id, selected, data }: NodeProps) {
         }}
       />
 
-      {/* Handle labels (left side) */}
-      <div
-        className="absolute text-[9px] font-mono text-cyan-500/60"
-        style={{ left: 14, top: "32%" }}
-      >
-        camera
-      </div>
-      <div
-        className="absolute text-[9px] font-mono text-emerald-500/60"
-        style={{ left: 14, top: "52%" }}
-      >
-        trigger
-      </div>
 
       {/* Model Badge */}
       <div className="flex items-center gap-2 mb-3">
@@ -302,6 +299,7 @@ export default function VisualLlmNode({ id, selected, data }: NodeProps) {
         type="source"
         position={Position.Right}
         id="response"
+        data-tooltip="response"
         style={{
           background: "#a855f7",
           border: "2px solid #13131a",

@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require("electron");
+const { app, BrowserWindow, ipcMain, Menu } = require("electron");
 const path = require("path");
 const { spawn } = require("child_process");
 
@@ -11,7 +11,7 @@ function spawnBackend() {
   const fs = require("fs");
   // Prefer native ARM64 Python for Qualcomm NPU acceleration
   const arm64Candidates = [
-    process.env.SNAPFLOW_PYTHON,
+    process.env.ARCFLOW_PYTHON,
     "C:\\Users\\hackathon user\\AppData\\Local\\Programs\\Python\\Python313-arm64\\python.exe",
     path.join(
       process.env.LOCALAPPDATA || "",
@@ -54,8 +54,7 @@ function createWindow() {
     minWidth: 1200,
     minHeight: 800,
     backgroundColor: "#0a0a0f",
-    titleBarStyle: "hiddenInset",
-    frame: process.platform === "darwin" ? false : true,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -78,6 +77,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
   spawnBackend();
   createWindow();
 
