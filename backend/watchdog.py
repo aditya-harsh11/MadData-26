@@ -42,6 +42,42 @@ COCO_CLASSES = [
 ]
 
 INPUT_SIZE = 640
+NMS_IOU_THRESHOLD = 0.5
+
+
+def _nms(boxes: np.ndarray, scores: np.ndarray, iou_threshold: float = NMS_IOU_THRESHOLD) -> list[int]:
+    """Greedy Non-Maximum Suppression. boxes: Nx4 (x1,y1,x2,y2), scores: N."""
+    if len(boxes) == 0:
+        return []
+
+    x1 = boxes[:, 0]
+    y1 = boxes[:, 1]
+    x2 = boxes[:, 2]
+    y2 = boxes[:, 3]
+    areas = (x2 - x1) * (y2 - y1)
+
+    order = scores.argsort()[::-1]
+    keep = []
+
+    while len(order) > 0:
+        i = order[0]
+        keep.append(int(i))
+
+        if len(order) == 1:
+            break
+
+        rest = order[1:]
+        xx1 = np.maximum(x1[i], x1[rest])
+        yy1 = np.maximum(y1[i], y1[rest])
+        xx2 = np.minimum(x2[i], x2[rest])
+        yy2 = np.minimum(y2[i], y2[rest])
+
+        inter = np.maximum(0.0, xx2 - xx1) * np.maximum(0.0, yy2 - yy1)
+        iou = inter / (areas[i] + areas[rest] - inter + 1e-6)
+
+        order = rest[iou <= iou_threshold]
+
+    return keep
 
 
 class Watchdog:
@@ -185,14 +221,20 @@ class Watchdog:
         max_scores = max_scores[mask]
         class_ids = np.argmax(scores, axis=1)
 
-        detections = []
-        for i in range(len(boxes)):
-            cx, cy, w, h = boxes[i]
-            x1 = (cx - w / 2) / INPUT_SIZE
-            y1 = (cy - h / 2) / INPUT_SIZE
-            x2 = (cx + w / 2) / INPUT_SIZE
-            y2 = (cy + h / 2) / INPUT_SIZE
+        # Convert cx/cy/w/h to x1/y1/x2/y2 for NMS
+        cx, cy, w, h = boxes[:, 0], boxes[:, 1], boxes[:, 2], boxes[:, 3]
+        nms_boxes = np.stack([
+            (cx - w / 2) / INPUT_SIZE,
+            (cy - h / 2) / INPUT_SIZE,
+            (cx + w / 2) / INPUT_SIZE,
+            (cy + h / 2) / INPUT_SIZE,
+        ], axis=1)
 
+        keep = _nms(nms_boxes, max_scores)
+
+        detections = []
+        for i in keep:
+            x1, y1, x2, y2 = nms_boxes[i]
             class_id = int(class_ids[i])
             label = COCO_CLASSES[class_id] if class_id < len(COCO_CLASSES) else f"class_{class_id}"
 
@@ -226,9 +268,17 @@ class Watchdog:
         scores = scores[mask]
         class_ids = class_ids[mask]
 
+        # Normalize boxes and apply NMS
+        nms_boxes = boxes.copy()
+        nms_boxes[:, 0] /= INPUT_SIZE
+        nms_boxes[:, 1] /= INPUT_SIZE
+        nms_boxes[:, 2] /= INPUT_SIZE
+        nms_boxes[:, 3] /= INPUT_SIZE
+
+        keep = _nms(nms_boxes, scores)
+
         detections = []
-        for i in range(len(boxes)):
-            x1, y1, x2, y2 = boxes[i]
+        for i in keep:
             class_id = int(class_ids[i])
             label = COCO_CLASSES[class_id] if class_id < len(COCO_CLASSES) else f"class_{class_id}"
 
@@ -236,10 +286,10 @@ class Watchdog:
                 "label": label,
                 "confidence": round(float(scores[i]), 3),
                 "bbox": [
-                    round(float(x1) / INPUT_SIZE, 4),
-                    round(float(y1) / INPUT_SIZE, 4),
-                    round(float(x2) / INPUT_SIZE, 4),
-                    round(float(y2) / INPUT_SIZE, 4),
+                    round(float(nms_boxes[i, 0]), 4),
+                    round(float(nms_boxes[i, 1]), 4),
+                    round(float(nms_boxes[i, 2]), 4),
+                    round(float(nms_boxes[i, 3]), 4),
                 ],
             })
 

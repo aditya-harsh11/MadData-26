@@ -14,11 +14,38 @@ export default function CameraNode({ id, selected }: NodeProps) {
   const [fps, setFps] = useState(3);
   const [frameCount, setFrameCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDevice, setSelectedDevice] = useState<string>("");
+
+  // Enumerate video input devices
+  useEffect(() => {
+    const enumerate = async () => {
+      try {
+        // Need a brief getUserMedia call to get labeled devices
+        const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
+        tempStream.getTracks().forEach((t) => t.stop());
+        const all = await navigator.mediaDevices.enumerateDevices();
+        setDevices(all.filter((d) => d.kind === "videoinput"));
+      } catch {
+        // Permission denied — we'll get unlabeled devices
+        try {
+          const all = await navigator.mediaDevices.enumerateDevices();
+          setDevices(all.filter((d) => d.kind === "videoinput"));
+        } catch {}
+      }
+    };
+    enumerate();
+  }, []);
 
   const startCapture = useCallback(async () => {
     try {
       setError(null);
-      const capture = new FrameCapture({ fps, width: 1280, height: 720 });
+      const capture = new FrameCapture({
+        fps,
+        width: 1280,
+        height: 720,
+        deviceId: selectedDevice || undefined,
+      });
       const stream = await capture.init();
 
       if (videoRef.current) {
@@ -36,7 +63,7 @@ export default function CameraNode({ id, selected }: NodeProps) {
     } catch (err: any) {
       setError(err.message || "Camera access denied");
     }
-  }, [fps, id]);
+  }, [fps, id, selectedDevice]);
 
   const stopCapture = useCallback(() => {
     captureRef.current?.destroy();
@@ -90,6 +117,25 @@ export default function CameraNode({ id, selected }: NodeProps) {
           </div>
         )}
       </div>
+
+      {/* Device Picker */}
+      {devices.length > 1 && (
+        <div className="mb-3">
+          <select
+            value={selectedDevice}
+            onChange={(e) => setSelectedDevice(e.target.value)}
+            disabled={active}
+            className="w-full bg-[#0a0a0f] border border-[#1e1e2e] rounded-md px-2.5 py-1.5 text-xs text-slate-300 outline-none focus:border-cyan-500/40 nodrag nowheel disabled:opacity-50"
+          >
+            <option value="">Default Camera</option>
+            {devices.map((d, i) => (
+              <option key={d.deviceId} value={d.deviceId}>
+                {d.label || `Camera ${i + 1}`}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* FPS Slider */}
       <div className="flex items-center gap-3 mb-4">

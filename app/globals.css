@@ -62,10 +62,20 @@ body {
   stroke-width: 2 !important;
 }
 
-.react-flow__edge.selected .react-flow__edge-path,
 .react-flow__edge:hover .react-flow__edge-path {
   stroke: var(--sf-cyan) !important;
   stroke-width: 2.5 !important;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #ef4444 !important;
+  stroke-width: 3 !important;
+  stroke-dasharray: 6 3;
+}
+
+/* Selected node outline */
+.react-flow__node.selected {
+  outline: none !important;
 }
 
 .react-flow__connection-line {

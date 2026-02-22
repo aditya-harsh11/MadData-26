@@ -77,6 +77,36 @@ export class PipelineSocket {
     );
   }
 
+  sendDetect(image: string, nodeId: string, confidence: number) {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "detect",
+        payload: { image, node_id: nodeId, confidence },
+      })
+    );
+  }
+
+  sendAudioAnalyze(audio: string, nodeId: string, confidence: number) {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "audio_analyze",
+        payload: { audio, node_id: nodeId, confidence },
+      })
+    );
+  }
+
+  sendAudioLlmAnalyze(audio: string, prompt: string, nodeId: string) {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "audio_llm_analyze",
+        payload: { audio, prompt, node_id: nodeId },
+      })
+    );
+  }
+
   sendTextGen(prompt: string, nodeId: string) {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
     this.ws.send(

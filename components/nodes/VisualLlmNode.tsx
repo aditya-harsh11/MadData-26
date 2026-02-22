@@ -19,6 +19,7 @@ export default function VisualLlmNode({ id, selected, data }: NodeProps) {
 
   const promptRef = useRef(prompt);
   const processingRef = useRef(false);
+  const lastTriggerVersionRef = useRef(0);
 
   useEffect(() => {
     promptRef.current = prompt;
@@ -26,12 +27,43 @@ export default function VisualLlmNode({ id, selected, data }: NodeProps) {
 
   const edges = useEdges();
 
+  // Find connected camera node
   const connectedCameraId = useMemo(() => {
     const incomingEdge = edges.find(
       (e) => e.target === id && e.targetHandle === "camera"
     );
     return incomingEdge?.source ?? null;
   }, [edges, id]);
+
+  // Find connected trigger node (optional — gates when VLM fires)
+  const { triggerNodeId, triggerHandle } = useMemo(() => {
+    const incomingEdge = edges.find(
+      (e) => e.target === id && e.targetHandle === "trigger"
+    );
+    return {
+      triggerNodeId: incomingEdge?.source ?? null,
+      triggerHandle: incomingEdge?.sourceHandle ?? null,
+    };
+  }, [edges, id]);
+
+  // A trigger is only valid if the source handle writes to the output store
+  // (match, no_match, response, output, detections, etc.) — NOT "frames" from a camera
+  const FRAME_HANDLES = new Set(["frames"]);
+  const isValidTrigger = triggerNodeId !== null && !FRAME_HANDLES.has(triggerHandle ?? "");
+
+  // Resolve trigger output key (handles compound keys like nodeId:match)
+  const triggerKey = useMemo(() => {
+    if (!isValidTrigger || !triggerNodeId) return null;
+    if (triggerHandle && triggerHandle !== "response" && triggerHandle !== "output" && triggerHandle !== "detections") {
+      return `${triggerNodeId}:${triggerHandle}`;
+    }
+    return triggerNodeId;
+  }, [triggerNodeId, triggerHandle, isValidTrigger]);
+
+  // Subscribe to trigger version changes
+  const triggerVersion = useNodeOutputStore(
+    (state) => (triggerKey ? (state.versions[triggerKey] ?? 0) : 0)
+  );
 
   // Listen for VLM results
   useEffect(() => {
@@ -48,36 +80,47 @@ export default function VisualLlmNode({ id, selected, data }: NodeProps) {
     return () => pipelineSocket.off("vlm_result", handler);
   }, [id]);
 
-  // Periodic analysis timer
-  useEffect(() => {
-    if (!connectedCameraId || !prompt.trim()) return;
-
-    const analyze = () => {
-      const frame = useFrameStore.getState().getFrame(connectedCameraId);
-      if (!frame || processingRef.current) return;
-      processingRef.current = true;
-      setProcessing(true);
-      pipelineSocket.sendVlmAnalyze(frame, promptRef.current, id);
-    };
-
-    // Run immediately
-    const initialTimeout = setTimeout(analyze, 500);
-
-    const timer = setInterval(analyze, interval * 1000);
-    return () => {
-      clearTimeout(initialTimeout);
-      clearInterval(timer);
-    };
-  }, [connectedCameraId, interval, id, prompt]);
-
-  const manualAnalyze = useCallback(() => {
+  // Helper to fire analysis
+  const fireAnalysis = useCallback(() => {
     if (!connectedCameraId) return;
     const frame = useFrameStore.getState().getFrame(connectedCameraId);
     if (!frame || processingRef.current) return;
     processingRef.current = true;
     setProcessing(true);
-    pipelineSocket.sendVlmAnalyze(frame, prompt, id);
-  }, [connectedCameraId, prompt, id]);
+    pipelineSocket.sendVlmAnalyze(frame, promptRef.current, id);
+  }, [connectedCameraId, id]);
+
+  // MODE 1: Interval timer (no trigger connected)
+  useEffect(() => {
+    if (isValidTrigger) return; // trigger mode takes over
+    if (!connectedCameraId || !prompt.trim()) return;
+
+    const initialTimeout = setTimeout(fireAnalysis, 500);
+    const timer = setInterval(fireAnalysis, interval * 1000);
+    return () => {
+      clearTimeout(initialTimeout);
+      clearInterval(timer);
+    };
+  }, [connectedCameraId, interval, prompt, isValidTrigger, fireAnalysis]);
+
+  // MODE 2: Trigger-gated (trigger connected — fires when trigger updates)
+  useEffect(() => {
+    if (!isValidTrigger) return;
+    if (!connectedCameraId || !prompt.trim()) return;
+    if (triggerVersion === 0) return; // no trigger output yet
+
+    // Debounce: don't fire faster than the interval
+    if (triggerVersion === lastTriggerVersionRef.current) return;
+    lastTriggerVersionRef.current = triggerVersion;
+
+    // Small delay to let the frame store update
+    const timeout = setTimeout(fireAnalysis, 200);
+    return () => clearTimeout(timeout);
+  }, [triggerVersion, isValidTrigger, connectedCameraId, prompt, fireAnalysis]);
+
+  const manualAnalyze = useCallback(() => {
+    fireAnalysis();
+  }, [fireAnalysis]);
 
   return (
     <NodeShell
@@ -96,8 +139,35 @@ export default function VisualLlmNode({ id, selected, data }: NodeProps) {
         style={{
           background: "#22d3ee",
           border: "2px solid #13131a",
+          top: "35%",
         }}
       />
+
+      {/* Input Handle — optional trigger */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        id="trigger"
+        style={{
+          background: "#10b981",
+          border: "2px solid #13131a",
+          top: "55%",
+        }}
+      />
+
+      {/* Handle labels (left side) */}
+      <div
+        className="absolute text-[9px] font-mono text-cyan-500/60"
+        style={{ left: 14, top: "32%" }}
+      >
+        camera
+      </div>
+      <div
+        className="absolute text-[9px] font-mono text-emerald-500/60"
+        style={{ left: 14, top: "52%" }}
+      >
+        trigger
+      </div>
 
       {/* Model Badge */}
       <div className="flex items-center gap-2 mb-3">
@@ -128,21 +198,41 @@ export default function VisualLlmNode({ id, selected, data }: NodeProps) {
         )}
       </div>
 
-      {/* Interval Slider */}
-      <div className="flex items-center gap-3 mb-3">
-        <span className="text-xs text-slate-500 w-16 shrink-0">Interval</span>
-        <input
-          type="range"
-          min={5}
-          max={120}
-          value={interval}
-          onChange={(e) => setInterval_(Number(e.target.value))}
-          className="flex-1 h-1.5 accent-purple-400 nodrag nowheel"
-        />
-        <span className="text-xs text-slate-400 font-mono w-8 text-right">
-          {interval}s
-        </span>
-      </div>
+      {/* Trigger status */}
+      {isValidTrigger && (
+        <div
+          className="flex items-center gap-2 rounded-md px-2.5 py-1.5 mb-3 text-[10px]"
+          style={{
+            background: "#10b98110",
+            border: "1px solid #10b98120",
+            color: "#10b981",
+          }}
+        >
+          <div
+            className="w-1.5 h-1.5 rounded-full"
+            style={{ background: "#10b981", boxShadow: "0 0 4px #10b981" }}
+          />
+          Trigger-gated — fires only when trigger updates
+        </div>
+      )}
+
+      {/* Interval Slider (shows purpose based on mode) */}
+      {!isValidTrigger && (
+        <div className="flex items-center gap-3 mb-3">
+          <span className="text-xs text-slate-500 w-16 shrink-0">Interval</span>
+          <input
+            type="range"
+            min={5}
+            max={120}
+            value={interval}
+            onChange={(e) => setInterval_(Number(e.target.value))}
+            className="flex-1 h-1.5 accent-purple-400 nodrag nowheel"
+          />
+          <span className="text-xs text-slate-400 font-mono w-8 text-right">
+            {interval}s
+          </span>
+        </div>
+      )}
 
       {/* Prompt */}
       <textarea

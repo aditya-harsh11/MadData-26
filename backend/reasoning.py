@@ -40,6 +40,7 @@ class ReasoningBrain:
         self._vlm_loaded = False
         self._llm_loaded = False
         self._serve_proc = None
+        self._audio_vlm = None
 
     # ── Start / check nexa serve ──────────────────────────────────
 
@@ -150,6 +151,106 @@ class ReasoningBrain:
 
         dt = (time.perf_counter() - t0) * 1000
         logger.info(f"VLM done: {dt:.0f}ms | {analysis_text[:120]}")
+
+        return {"analysis": analysis_text, "latency_ms": round(dt, 1)}
+
+    # ── Audio LLM inference via nexaai Python SDK ────────────────
+
+    def _ensure_audio_vlm(self):
+        """Lazy-load a dedicated VLM instance for audio via the Python SDK."""
+        if self._audio_vlm is not None:
+            return
+        try:
+            from nexaai import VLM, ModelConfig
+            self._audio_vlm = VLM.from_(model=VLM_MODEL, config=ModelConfig())
+            logger.info("Audio VLM (Python SDK) loaded successfully")
+        except Exception as e:
+            logger.error(f"Failed to load Audio VLM via Python SDK: {e}")
+            self._audio_vlm = None
+
+    def analyze_audio(
+        self,
+        base64_pcm: str,
+        prompt: str = "Describe what you hear.",
+        client_id: str = "",
+    ) -> dict:
+        """Send audio to OmniNeural-4B via nexaai Python SDK."""
+        import wave
+        import tempfile
+        import base64 as b64mod
+
+        t0 = time.perf_counter()
+
+        if not self._vlm_loaded:
+            return {"analysis": "[Model not loaded]", "latency_ms": 0}
+        if not base64_pcm:
+            return {"analysis": "[No audio received]", "latency_ms": 0}
+
+        # Convert float32 PCM → WAV temp file
+        tmp_path = None
+        try:
+            import numpy as np
+            raw = b64mod.b64decode(base64_pcm)
+            pcm_f32 = np.frombuffer(raw, dtype=np.float32)
+            logger.info(f"Audio PCM: {len(pcm_f32)} samples, "
+                        f"rms={np.sqrt(np.mean(pcm_f32**2)):.4f}, "
+                        f"max={np.max(np.abs(pcm_f32)):.4f}")
+            pcm_f32 = np.clip(pcm_f32, -1.0, 1.0)
+            pcm_i16 = (pcm_f32 * 32767).astype(np.int16)
+
+            cache_dir = os.path.join(os.path.dirname(__file__), "_vlm_cache")
+            os.makedirs(cache_dir, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(suffix=".wav", dir=cache_dir)
+            os.close(fd)
+
+            with wave.open(tmp_path, "wb") as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(16000)
+                wf.writeframes(pcm_i16.tobytes())
+
+            logger.info(f"Audio WAV written: {tmp_path} ({os.path.getsize(tmp_path)} bytes)")
+        except Exception as e:
+            logger.error(f"Audio WAV conversion failed: {e}")
+            if tmp_path:
+                try: os.unlink(tmp_path)
+                except: pass
+            return {"analysis": f"[Audio encoding error: {e}]", "latency_ms": 0}
+
+        try:
+            from nexaai import GenerationConfig
+
+            self._ensure_audio_vlm()
+            if self._audio_vlm is None:
+                return {"analysis": "[Audio VLM failed to load]", "latency_ms": 0}
+
+            # Skip apply_chat_template (it's a no-op on C interface).
+            # Pass the prompt text directly — generate() handles the chat
+            # template internally. audio_paths tells the C library which
+            # files to encode as audio embeddings.
+            gen_config = GenerationConfig(
+                max_tokens=256,
+                audio_paths=[tmp_path],
+            )
+
+            logger.info(f"Audio generate: prompt={prompt!r}, audio={tmp_path}")
+            self._audio_vlm.reset()
+            result = self._audio_vlm.generate(prompt, config=gen_config)
+            analysis_text = result.text if hasattr(result, "text") else str(result)
+
+            if _is_repetitive_garbage(analysis_text):
+                logger.warning("Audio LLM returned repetitive output")
+                analysis_text = "[Audio glitch: response was repetitive. Try again.]"
+
+        except Exception as e:
+            logger.error(f"Audio LLM SDK error: {e}")
+            analysis_text = f"[Audio LLM error: {e}]"
+        finally:
+            try: os.unlink(tmp_path)
+            except: pass
+
+        dt = (time.perf_counter() - t0) * 1000
+        logger.info(f"Audio LLM done: {dt:.0f}ms | {analysis_text[:120]}")
 
         return {"analysis": analysis_text, "latency_ms": round(dt, 1)}
 

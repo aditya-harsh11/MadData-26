@@ -6,19 +6,27 @@ import {
   Eye,
   GitBranch,
   MessageSquare,
+  ScanSearch,
   Zap,
   Cpu,
   Wifi,
   WifiOff,
+  Mic,
+  AudioLines,
+  Ear,
 } from "lucide-react";
 import { NODE_CATALOG, type NodeTypeInfo } from "@/lib/types";
 
 const iconMap: Record<string, React.ReactNode> = {
   Camera: <Camera size={18} />,
+  ScanSearch: <ScanSearch size={18} />,
   Eye: <Eye size={18} />,
   GitBranch: <GitBranch size={18} />,
   MessageSquare: <MessageSquare size={18} />,
   Zap: <Zap size={18} />,
+  Mic: <Mic size={18} />,
+  AudioLines: <AudioLines size={18} />,
+  Ear: <Ear size={18} />,
 };
 
 const categoryLabels: Record<string, string> = {

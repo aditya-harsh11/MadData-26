@@ -2,6 +2,7 @@ export interface FrameCaptureOptions {
   fps?: number;
   width?: number;
   height?: number;
+  deviceId?: string;
 }
 
 export class FrameCapture {
@@ -13,12 +14,14 @@ export class FrameCapture {
   private _fps: number;
   private _width: number;
   private _height: number;
+  private _deviceId: string | undefined;
   private onFrame: ((base64: string) => void) | null = null;
 
   constructor(opts: FrameCaptureOptions = {}) {
     this._fps = opts.fps ?? 3;
     this._width = opts.width ?? 640;
     this._height = opts.height ?? 480;
+    this._deviceId = opts.deviceId;
   }
 
   get fps() {
@@ -38,7 +41,9 @@ export class FrameCapture {
       video: {
         width: { ideal: this._width },
         height: { ideal: this._height },
-        facingMode: "user",
+        ...(this._deviceId
+          ? { deviceId: { exact: this._deviceId } }
+          : { facingMode: "user" }),
       },
       audio: false,
     });

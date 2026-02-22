@@ -18,18 +18,26 @@ import "reactflow/dist/style.css";
 
 import Sidebar from "./Sidebar";
 import CameraNode from "./nodes/CameraNode";
+import DetectionNode from "./nodes/DetectionNode";
 import VisualLlmNode from "./nodes/VisualLlmNode";
 import LogicNode from "./nodes/LogicNode";
 import LlmNode from "./nodes/LlmNode";
 import ActionNode from "./nodes/ActionNode";
+import MicNode from "./nodes/MicNode";
+import AudioDetectNode from "./nodes/AudioDetectNode";
+import AudioLlmNode from "./nodes/AudioLlmNode";
 import { pipelineSocket } from "@/lib/websocket";
 
 const nodeTypes = {
   camera: CameraNode,
+  detection: DetectionNode,
   visualLlm: VisualLlmNode,
   logic: LogicNode,
   llm: LlmNode,
   action: ActionNode,
+  mic: MicNode,
+  audioDetect: AudioDetectNode,
+  audioLlm: AudioLlmNode,
 };
 
 const VALID_NODE_TYPES = new Set<string>(Object.keys(nodeTypes));
@@ -42,9 +50,15 @@ const defaultNodes: Node[] = [
     data: {},
   },
   {
+    id: "detect-1",
+    type: "detection",
+    position: { x: 480, y: 180 },
+    data: { confidence: 45, interval: 2 },
+  },
+  {
     id: "vlm-1",
     type: "visualLlm",
-    position: { x: 500, y: 150 },
+    position: { x: 900, y: 100 },
     data: {
       prompt:
         "Describe any safety concerns you see. Mention if anyone is not wearing required safety gear.",
@@ -54,7 +68,7 @@ const defaultNodes: Node[] = [
   {
     id: "logic-1",
     type: "logic",
-    position: { x: 1020, y: 180 },
+    position: { x: 1400, y: 180 },
     data: {
       conditions: [
         { id: "1", operator: "contains", value: "danger" },
@@ -67,12 +81,21 @@ const defaultNodes: Node[] = [
   {
     id: "action-1",
     type: "action",
-    position: { x: 1500, y: 200 },
+    position: { x: 1880, y: 200 },
     data: { actionType: "log" },
   },
 ];
 
 const defaultEdges: Edge[] = [
+  {
+    id: "e-camera-detect",
+    source: "camera-1",
+    sourceHandle: "frames",
+    target: "detect-1",
+    targetHandle: "camera",
+    animated: true,
+    style: { stroke: "#22d3ee50" },
+  },
   {
     id: "e-camera-vlm",
     source: "camera-1",
@@ -81,6 +104,15 @@ const defaultEdges: Edge[] = [
     targetHandle: "camera",
     animated: true,
     style: { stroke: "#22d3ee50" },
+  },
+  {
+    id: "e-detect-vlm",
+    source: "detect-1",
+    sourceHandle: "match",
+    target: "vlm-1",
+    targetHandle: "trigger",
+    animated: true,
+    style: { stroke: "#10b98150" },
   },
   {
     id: "e-vlm-logic",
@@ -314,15 +346,18 @@ export default function Canvas() {
           onDrop={onDrop}
           onDragOver={onDragOver}
           nodeTypes={nodeTypes}
+          deleteKeyCode={["Backspace", "Delete"]}
           fitView
           fitViewOptions={{ padding: 0.2 }}
           snapToGrid
           snapGrid={[20, 20]}
           noDragClassName="nodrag"
           noWheelClassName="nowheel"
+          edgesUpdatable
           defaultEdgeOptions={{
             animated: true,
-            style: { strokeWidth: 2 },
+            style: { strokeWidth: 2, cursor: "pointer" },
+            interactionWidth: 20,
           }}
           proOptions={{ hideAttribution: true }}
         >
@@ -333,6 +368,18 @@ export default function Canvas() {
             color="#1a1a2e"
           />
           <Controls showInteractive={false} position="bottom-right" />
+          {/* Keyboard hint */}
+          <div
+            className="absolute bottom-3 left-3 z-10 flex items-center gap-3 px-3 py-1.5 rounded-md pointer-events-none"
+            style={{
+              background: "#0a0a0fcc",
+              border: "1px solid #1e1e2e",
+            }}
+          >
+            <span className="text-[10px] text-slate-500">
+              Select + <kbd className="px-1 py-0.5 rounded bg-[#1e1e2e] text-slate-400 font-mono text-[9px]">Del</kbd> to remove nodes &amp; connections
+            </span>
+          </div>
           <MiniMap
             nodeStrokeWidth={3}
             pannable
@@ -345,10 +392,14 @@ export default function Canvas() {
             nodeColor={(node) => {
               const colors: Record<string, string> = {
                 camera: "#22d3ee",
+                detection: "#f97316",
                 visualLlm: "#a855f7",
                 logic: "#f59e0b",
                 llm: "#3b82f6",
                 action: "#10b981",
+                mic: "#06b6d4",
+                audioDetect: "#8b5cf6",
+                audioLlm: "#ec4899",
               };
               return colors[node.type || ""] || "#64748b";
             }}

@@ -20,6 +20,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
 from reasoning import ReasoningBrain
+from watchdog import Watchdog
+from audiodetector import AudioDetector
 
 # ─── Qualcomm AI Hub Configuration ───
 QAI_HUB_TOKEN = os.environ.get("QAI_HUB_API_TOKEN", "fi3l2clm1oimw3f1aj3fl6zthbqtihxftki0z894")
@@ -46,6 +48,45 @@ logger = logging.getLogger("snapflow")
 
 # ─── AI Engine ───
 brain = ReasoningBrain()
+
+# ─── YOLO Object Detection ───
+_watchdog: Watchdog | None = None
+
+def _get_watchdog() -> Watchdog | None:
+    global _watchdog
+    if _watchdog is None:
+        model_dir = Path(__file__).parent / "models"
+        model_path = model_dir / "yolov8n.onnx"
+        if model_path.exists():
+            try:
+                _watchdog = Watchdog(str(model_path), confidence=0.45, use_cpu=True)
+                logger.info(f"Watchdog loaded from {model_path}")
+            except Exception as e:
+                logger.warning(f"Could not load Watchdog: {e}")
+        else:
+            logger.warning(f"YOLO model not found at {model_path}")
+    return _watchdog
+
+# ─── YamNet Audio Detection ───
+_audio_detector: AudioDetector | None = None
+
+def _get_audio_detector() -> AudioDetector | None:
+    global _audio_detector
+    if _audio_detector is None:
+        model_dir = Path(__file__).parent / "models"
+        model_path = model_dir / "yamnet.onnx"
+        labels_path = model_dir / "yamnet_class_map.csv"
+        if model_path.exists() and labels_path.exists():
+            try:
+                _audio_detector = AudioDetector(
+                    str(model_path), str(labels_path), confidence=0.15, use_cpu=True
+                )
+                logger.info(f"AudioDetector loaded from {model_path}")
+            except Exception as e:
+                logger.warning(f"Could not load AudioDetector: {e}")
+        else:
+            logger.warning(f"YamNet model or labels not found in {model_dir}")
+    return _audio_detector
 
 DEFAULT_PROMPT = "Describe what you see. If there is any safety concern, explain it."
 
@@ -143,12 +184,18 @@ async def websocket_endpoint(ws: WebSocket):
 
             if msg_type == "frame":
                 await handle_frame(cid, payload)
+            elif msg_type == "detect":
+                await handle_detect(cid, payload)
             elif msg_type == "vlm_analyze":
                 await handle_vlm_analyze(cid, payload)
             elif msg_type == "text_gen":
                 await handle_text_gen(cid, payload)
             elif msg_type == "describe_workflow":
                 await handle_describe_workflow(cid, payload)
+            elif msg_type == "audio_analyze":
+                await handle_audio_analyze(cid, payload)
+            elif msg_type == "audio_llm_analyze":
+                await handle_audio_llm_analyze(cid, payload)
             elif msg_type == "generate_workflow":
                 await handle_generate_workflow(cid, payload)
             else:
@@ -176,6 +223,122 @@ async def handle_frame(cid: str, payload: dict):
 
     if cid in _client_state:
         _client_state[cid]["latest_frames"][node_id] = image_b64
+
+
+# ─── YOLO detect handler ───
+
+async def handle_detect(cid: str, payload: dict):
+    """Run YOLO object detection on a frame."""
+    import time
+
+    image_b64 = payload.get("image", "")
+    node_id = payload.get("node_id", "")
+    conf = payload.get("confidence", 0.45)
+
+    if not image_b64:
+        await manager.send(cid, "detection_result", {
+            "node_id": node_id,
+            "detections": [],
+            "latency_ms": 0,
+        })
+        return
+
+    watchdog = _get_watchdog()
+    if watchdog is None or not watchdog.loaded:
+        await manager.send(cid, "detection_result", {
+            "node_id": node_id,
+            "detections": [],
+            "latency_ms": 0,
+            "error": "YOLO model not loaded",
+        })
+        return
+
+    loop = asyncio.get_event_loop()
+    watchdog.confidence = conf
+
+    t0 = time.perf_counter()
+    detections = await loop.run_in_executor(
+        None, watchdog.detect_from_base64, image_b64
+    )
+    latency = (time.perf_counter() - t0) * 1000
+
+    await manager.send(cid, "detection_result", {
+        "node_id": node_id,
+        "detections": detections,
+        "latency_ms": round(latency, 1),
+    })
+
+
+# ─── Audio analyze handler ───
+
+async def handle_audio_analyze(cid: str, payload: dict):
+    """Run YamNet audio classification on a PCM chunk."""
+    import time
+
+    audio_b64 = payload.get("audio", "")
+    node_id = payload.get("node_id", "")
+    conf = payload.get("confidence", 0.15)
+
+    if not audio_b64:
+        await manager.send(cid, "audio_result", {
+            "node_id": node_id,
+            "detections": [],
+            "latency_ms": 0,
+        })
+        return
+
+    detector = _get_audio_detector()
+    if detector is None or not detector.loaded:
+        await manager.send(cid, "audio_result", {
+            "node_id": node_id,
+            "detections": [],
+            "latency_ms": 0,
+            "error": "YamNet model not loaded",
+        })
+        return
+
+    loop = asyncio.get_event_loop()
+    detector.confidence = conf
+
+    t0 = time.perf_counter()
+    detections = await loop.run_in_executor(
+        None, detector.classify_from_base64, audio_b64
+    )
+    latency = (time.perf_counter() - t0) * 1000
+
+    await manager.send(cid, "audio_result", {
+        "node_id": node_id,
+        "detections": detections,
+        "latency_ms": round(latency, 1),
+    })
+
+
+# ─── Audio LLM handler ───
+
+async def handle_audio_llm_analyze(cid: str, payload: dict):
+    """Run OmniNeural-4B on audio with a text prompt."""
+    audio_b64 = payload.get("audio", "")
+    prompt = payload.get("prompt", "Describe what you hear.")
+    node_id = payload.get("node_id", "")
+
+    if not audio_b64:
+        await manager.send(cid, "audio_llm_result", {
+            "node_id": node_id,
+            "analysis": "[No audio available]",
+            "latency_ms": 0,
+        })
+        return
+
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None, brain.analyze_audio, audio_b64, prompt, cid
+    )
+
+    await manager.send(cid, "audio_llm_result", {
+        "node_id": node_id,
+        "analysis": result.get("analysis", ""),
+        "latency_ms": result.get("latency_ms", 0),
+    })
 
 
 # ─── VLM analyze handler ───
@@ -226,10 +389,14 @@ async def handle_text_gen(cid: str, payload: dict):
 
 NODE_TYPE_LABELS = {
     "camera": "Camera",
+    "detection": "Object Detect",
     "visualLlm": "Visual LLM",
     "logic": "Logic",
     "llm": "LLM",
     "action": "Action",
+    "mic": "Microphone",
+    "audioDetect": "Audio Detect",
+    "audioLlm": "Audio LLM",
 }
 
 
@@ -291,7 +458,7 @@ async def handle_describe_workflow(cid: str, payload: dict):
 
 # ─── Generate workflow from text (AI creates nodes + edges) ───
 
-VALID_NODE_TYPES = {"camera", "visualLlm", "logic", "llm", "action"}
+VALID_NODE_TYPES = {"camera", "detection", "visualLlm", "logic", "llm", "action", "mic", "audioDetect", "audioLlm"}
 
 GENERATE_WORKFLOW_PROMPT = """You are a pipeline designer for SnapFlow, a visual AI camera pipeline editor.
 The user will describe a workflow. Output ONLY valid JSON, no other text.
