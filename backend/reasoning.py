@@ -1,69 +1,65 @@
 """
 Reasoning Brain — Heavy multimodal inference tier.
 
-Uses the Nexa SDK to run OmniNeural-4B (VLM) on the Qualcomm NPU
+Uses the Nexa SDK (nexaai) to run OmniNeural-4B (VLM) on the Qualcomm NPU
 for rich scene understanding, and Llama-3.2-3B for text generation.
-
-This tier is only invoked when the Watchdog detects a trigger condition.
 """
 
+import io
+import os
 import time
 import base64
 import logging
+import threading
 from pathlib import Path
+
+from PIL import Image as PILImage
 
 logger = logging.getLogger("snapflow.reasoning")
 
+DEBUG_DIR = Path(__file__).parent / "debug_frames"
+
+IMAGE_CACHE = Path("C:/snapflow_cache")
+IMAGE_CACHE.mkdir(exist_ok=True)
+
 
 class ReasoningBrain:
-    """Tier 2 — Nexa SDK multimodal reasoning engine."""
+    """Tier 2 — Nexa SDK multimodal reasoning engine on Qualcomm NPU."""
 
     def __init__(self):
-        self.vlm = None
-        self.llm = None
+        self._vlm_model_name: str = "NexaAI/OmniNeural-4B"
         self._vlm_loaded = False
+        self._vlm_lock = threading.Lock()
+        self.llm = None
         self._llm_loaded = False
 
-    def load_vlm(self, model_name: str = "NexaAI/OmniNeural-4B"):
-        """Load the Vision-Language Model via Nexa SDK targeting NPU."""
-        try:
-            from nexa.gguf import NexaVLMInference
+    # ── Model loading ─────────────────────────────────────────────
 
-            self.vlm = NexaVLMInference(
-                model_path=model_name,
-                local_path=None,
-                projector_local_path=None,
-            )
+    def load_vlm(self, model_name: str = "NexaAI/OmniNeural-4B"):
+        try:
+            import nexaai
+            self._vlm_model_name = model_name
+            logger.info(f"Loading VLM (warmup): {model_name}")
+            vlm = nexaai.VLM.from_(model_name, config=nexaai.ModelConfig())
+            del vlm
             self._vlm_loaded = True
-            logger.info(f"VLM loaded: {model_name}")
+            logger.info(f"VLM ready: {model_name}")
         except ImportError:
-            logger.warning(
-                "Nexa SDK not installed. Install with: pip install nexaai"
-            )
-            self._vlm_loaded = False
+            logger.warning("Nexa SDK not installed.")
         except Exception as e:
             logger.error(f"Failed to load VLM: {e}")
-            self._vlm_loaded = False
 
     def load_llm(self, model_name: str = "NexaAI/Llama-3.2-3B"):
-        """Load the text generation LLM via Nexa SDK."""
         try:
-            from nexa.gguf import NexaTextInference
-
-            self.llm = NexaTextInference(
-                model_path=model_name,
-                local_path=None,
-            )
+            import nexaai
+            logger.info(f"Loading LLM: {model_name}")
+            self.llm = nexaai.LLM.from_(model_name)
             self._llm_loaded = True
             logger.info(f"LLM loaded: {model_name}")
         except ImportError:
-            logger.warning(
-                "Nexa SDK not installed. Install with: pip install nexaai"
-            )
-            self._llm_loaded = False
+            logger.warning("Nexa SDK not installed.")
         except Exception as e:
             logger.error(f"Failed to load LLM: {e}")
-            self._llm_loaded = False
 
     @property
     def vlm_loaded(self) -> bool:
@@ -73,104 +69,105 @@ class ReasoningBrain:
     def llm_loaded(self) -> bool:
         return self._llm_loaded
 
-    def analyze_frame(
-        self,
-        base64_image: str,
-        prompt: str = "Describe what you see. If there is any safety concern, explain it.",
-        trigger_label: str = "",
-    ) -> dict:
-        """
-        Run multimodal reasoning on a single frame.
+    # ── Image prep ────────────────────────────────────────────────
 
-        Args:
-            base64_image: Base64-encoded JPEG image (may include data URI prefix)
-            prompt: The reasoning prompt to send to the VLM
-            trigger_label: What the Watchdog detected (for context)
-
-        Returns:
-            dict with 'analysis' text and metadata
-        """
-        t0 = time.perf_counter()
-
-        if not self._vlm_loaded:
-            return {
-                "analysis": "[VLM not loaded — install Nexa SDK and download OmniNeural-4B]",
-                "trigger_label": trigger_label,
-                "latency_ms": 0,
-            }
-
-        # Strip data URI prefix
+    @staticmethod
+    def _save_frame(base64_image: str) -> str:
         if "," in base64_image:
             base64_image = base64_image.split(",", 1)[1]
 
-        # Save temp image for VLM input
-        import tempfile
         img_bytes = base64.b64decode(base64_image)
-        tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
-        tmp.write(img_bytes)
-        tmp.flush()
-        tmp_path = tmp.name
-        tmp.close()
+        pil = PILImage.open(io.BytesIO(img_bytes)).convert("RGB")
 
-        try:
-            # Build context-aware prompt
-            full_prompt = prompt
-            if trigger_label:
-                full_prompt = (
-                    f"The object detection system detected: '{trigger_label}'. "
-                    f"{prompt}"
+        MAX_W = 640
+        w, h = pil.size
+        if w > MAX_W:
+            pil = pil.resize((MAX_W, round(h * MAX_W / w)), PILImage.LANCZOS)
+
+        out = str(IMAGE_CACHE / "frame.jpg")
+        pil.save(out, format="JPEG", quality=95)
+        logger.info(f"Frame: {w}x{h} → {pil.size[0]}x{pil.size[1]}")
+        return out
+
+    # ── VLM inference — fresh instance every call ─────────────────
+
+    def analyze_frame(
+        self,
+        base64_image: str,
+        prompt: str = "Describe what you see.",
+        client_id: str = "",
+    ) -> dict:
+        t0 = time.perf_counter()
+
+        if not self._vlm_loaded:
+            return {"analysis": "[VLM not loaded]", "latency_ms": 0}
+        if not base64_image:
+            return {"analysis": "[No frame received]", "latency_ms": 0}
+
+        image_path = self._save_frame(base64_image)
+
+        with self._vlm_lock:
+            try:
+                import nexaai
+
+                vlm = nexaai.VLM.from_(
+                    self._vlm_model_name, config=nexaai.ModelConfig()
                 )
 
-            result = self.vlm._chat(full_prompt, tmp_path)
-            analysis_text = result if isinstance(result, str) else str(result)
-        except Exception as e:
-            logger.error(f"VLM inference error: {e}")
-            analysis_text = f"[VLM error: {e}]"
-        finally:
-            Path(tmp_path).unlink(missing_ok=True)
+                messages = [
+                    nexaai.VlmChatMessage(
+                        role="user",
+                        contents=[
+                            nexaai.VlmContent(type="text", text=prompt),
+                            nexaai.VlmContent(type="image", text=image_path),
+                        ],
+                    )
+                ]
+                formatted = vlm.apply_chat_template(messages)
+
+                gen_config = nexaai.GenerationConfig(
+                    max_tokens=256,
+                    image_paths=[image_path],
+                )
+
+                logger.info(f"VLM image: {image_path}")
+                logger.info(f"VLM prompt: {prompt[:200]}")
+
+                result = vlm.generate(formatted, config=gen_config)
+                analysis_text = result.full_text
+
+                del vlm
+
+            except Exception as e:
+                logger.error(f"VLM inference error: {e}", exc_info=True)
+                analysis_text = f"[VLM error: {e}]"
 
         dt = (time.perf_counter() - t0) * 1000
-        logger.info(f"VLM reasoning: {dt:.0f}ms")
+        logger.info(f"VLM done: {dt:.0f}ms | {analysis_text[:120]}")
 
-        return {
-            "analysis": analysis_text,
-            "trigger_label": trigger_label,
-            "latency_ms": round(dt, 1),
-        }
+        return {"analysis": analysis_text, "latency_ms": round(dt, 1)}
+
+    def clear_client(self, client_id: str):
+        pass
+
+    # ── LLM text generation ───────────────────────────────────────
 
     def generate_text(self, prompt: str, max_tokens: int = 256) -> dict:
-        """
-        Run text generation with Llama-3.2-3B.
-
-        Args:
-            prompt: The input prompt
-            max_tokens: Maximum tokens to generate
-
-        Returns:
-            dict with 'text' and metadata
-        """
         t0 = time.perf_counter()
 
         if not self._llm_loaded:
-            return {
-                "text": "[LLM not loaded — install Nexa SDK and download Llama-3.2-3B]",
-                "latency_ms": 0,
-            }
+            return {"text": "[LLM not loaded]", "latency_ms": 0}
 
         try:
-            result = self.llm.create_completion(prompt, max_tokens=max_tokens)
-            if isinstance(result, dict) and "choices" in result:
-                text = result["choices"][0]["text"]
-            else:
-                text = str(result)
+            import nexaai
+            result = self.llm.generate(
+                prompt, config=nexaai.GenerationConfig(max_tokens=max_tokens)
+            )
+            text = result.full_text
         except Exception as e:
             logger.error(f"LLM inference error: {e}")
             text = f"[LLM error: {e}]"
 
         dt = (time.perf_counter() - t0) * 1000
-        logger.info(f"LLM generation: {dt:.0f}ms")
-
-        return {
-            "text": text,
-            "latency_ms": round(dt, 1),
-        }
+        logger.info(f"LLM done: {dt:.0f}ms")
+        return {"text": text, "latency_ms": round(dt, 1)}

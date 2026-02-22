@@ -59,7 +59,7 @@ export class FrameCapture {
   captureFrame(): string | null {
     if (!this.video || !this.ctx || !this.canvas) return null;
     this.ctx.drawImage(this.video, 0, 0, this._width, this._height);
-    return this.canvas.toDataURL("image/jpeg", 0.7);
+    return this.canvas.toDataURL("image/jpeg", 0.85);
   }
 
   startCapture(callback: (base64: string) => void) {

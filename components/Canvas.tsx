@@ -44,19 +44,19 @@ const defaultNodes: Node[] = [
   {
     id: "watchdog-1",
     type: "watchdog",
-    position: { x: 400, y: 180 },
+    position: { x: 500, y: 180 },
     data: {},
   },
   {
     id: "brain-1",
     type: "reasoningBrain",
-    position: { x: 740, y: 150 },
+    position: { x: 960, y: 150 },
     data: {},
   },
   {
     id: "action-1",
     type: "action",
-    position: { x: 1120, y: 200 },
+    position: { x: 1460, y: 180 },
     data: {},
   },
 ];
@@ -222,6 +222,8 @@ export default function Canvas() {
           fitViewOptions={{ padding: 0.2 }}
           snapToGrid
           snapGrid={[20, 20]}
+          noDragClassName="nodrag"
+          noWheelClassName="nowheel"
           defaultEdgeOptions={{
             animated: true,
             style: { strokeWidth: 2 },

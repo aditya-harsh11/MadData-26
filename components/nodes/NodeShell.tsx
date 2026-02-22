@@ -19,7 +19,7 @@ export default function NodeShell({
   status = "idle",
   selected,
   children,
-  width = 260,
+  width = 360,
 }: NodeShellProps) {
   const statusColors = {
     idle: "#64748b",
@@ -33,7 +33,7 @@ export default function NodeShell({
       style={{
         width,
         background: "#13131a",
-        border: `1px solid ${selected ? accent : "#1e1e2e"}`,
+        border: `1.5px solid ${selected ? accent : "#1e1e2e"}`,
         boxShadow: selected
           ? `0 0 20px ${accent}22, 0 4px 24px rgba(0,0,0,0.5)`
           : "0 4px 24px rgba(0,0,0,0.4)",
@@ -42,26 +42,26 @@ export default function NodeShell({
     >
       {/* Header */}
       <div
-        className="flex items-center gap-2 px-3 py-2"
+        className="flex items-center gap-2.5 px-4 py-3"
         style={{
           background: `linear-gradient(135deg, ${accent}12 0%, transparent 60%)`,
           borderBottom: "1px solid #1e1e2e",
         }}
       >
         <div
-          className="flex items-center justify-center w-6 h-6 rounded-md"
+          className="flex items-center justify-center w-7 h-7 rounded-md"
           style={{ background: `${accent}18`, color: accent }}
         >
           {icon}
         </div>
         <span
-          className="text-xs font-semibold tracking-wide uppercase flex-1"
+          className="text-sm font-semibold tracking-wide uppercase flex-1"
           style={{ color: "#e2e8f0" }}
         >
           {title}
         </span>
         <div
-          className="w-2 h-2 rounded-full"
+          className="w-2.5 h-2.5 rounded-full"
           style={{
             background: statusColors[status],
             boxShadow:
@@ -75,7 +75,7 @@ export default function NodeShell({
       </div>
 
       {/* Body */}
-      <div className="p-3">{children}</div>
+      <div className="p-4">{children}</div>
     </div>
   );
 }

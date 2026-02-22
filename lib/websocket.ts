@@ -89,6 +89,16 @@ export class PipelineSocket {
     );
   }
 
+  sendConfig(config: Record<string, number | string>) {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    this.ws.send(
+      JSON.stringify({
+        type: "config",
+        payload: config,
+      })
+    );
+  }
+
   on(event: string, handler: MessageHandler) {
     if (!this.handlers.has(event)) {
       this.handlers.set(event, new Set());

@@ -1,12 +1,15 @@
 """
 Watchdog — Lightweight ONNX object detection tier.
 
+Runs on Qualcomm NPU via onnxruntime-qnn with QNNExecutionProvider.
+Supports QNN context binary caching for instant subsequent loads.
+
 Supports two model formats:
-  1. Standard ONNX (local ultralytics export)
+  1. Standard ONNX (local ultralytics export) — JIT-compiled for QNN HTP
      Input:  [1, 3, 640, 640]  NCHW float32
      Output: [1, 84, 8400]     raw xywh + class scores
 
-  2. Qualcomm AI Hub precompiled QNN ONNX
+  2. Qualcomm AI Hub precompiled QNN context binary ONNX
      Input:  [1, 640, 640, 3]  NHWC float32
      Output: boxes [1,8400,4], scores [1,8400], class_idx [1,8400]
 """
@@ -44,12 +47,13 @@ INPUT_SIZE = 640
 class Watchdog:
     """Lightweight ONNX object-detection tier (Tier 1)."""
 
-    def __init__(self, model_path: str | None = None, confidence: float = 0.45):
+    def __init__(self, model_path: str | None = None, confidence: float = 0.45, use_cpu: bool = False):
         self.confidence = confidence
         self.session = None
         self.model_path = model_path
         self._loaded = False
         self._qnn_format = False  # True if Qualcomm AI Hub precompiled model
+        self._use_cpu = use_cpu
 
         if model_path and Path(model_path).exists():
             self._load_model(model_path)
@@ -61,31 +65,82 @@ class Watchdog:
             providers = ort.get_available_providers()
             logger.info(f"Available ONNX providers: {providers}")
 
-            # Prefer QNN (Qualcomm NPU) > DML > CPU
+            # Build provider list with QNN-specific options
+            provider_options = []
             preferred = []
-            for p in ["QNNExecutionProvider", "DmlExecutionProvider", "CPUExecutionProvider"]:
-                if p in providers:
-                    preferred.append(p)
 
-            self.session = ort.InferenceSession(path, providers=preferred)
+            if self._use_cpu:
+                logger.info("CPU-only mode requested — skipping QNN/DML providers")
+                preferred.append("CPUExecutionProvider")
+                provider_options.append({})
+
+            elif "QNNExecutionProvider" in providers:
+                preferred.append("QNNExecutionProvider")
+
+                # QNN context binary cache path — avoids re-compilation on restart
+                cache_dir = Path(path).parent / "qnn_cache"
+                cache_dir.mkdir(exist_ok=True)
+                ctx_binary = str(cache_dir / (Path(path).stem + "_ctx.onnx"))
+
+                qnn_opts = {
+                    "backend_path": "QnnHtp.dll",           # Target Qualcomm HTP (NPU)
+                    "htp_performance_mode": "burst",         # Max NPU performance
+                    "htp_graph_finalization_optimization_mode": "3",  # Highest optimization
+                    "enable_htp_fp16_precision": "1",        # FP16 for speed
+                    "ep_context_enable": "1",                # Enable context caching
+                    "ep_context_file_path": ctx_binary,      # Cache path
+                }
+
+                # If a cached context binary exists, load it directly
+                if Path(ctx_binary).exists():
+                    logger.info(f"Loading cached QNN context binary: {ctx_binary}")
+                    path = ctx_binary  # Load from cache instead of re-compiling
+
+                provider_options.append(qnn_opts)
+            else:
+                logger.warning("QNNExecutionProvider not available — falling back")
+
+            if not self._use_cpu and "DmlExecutionProvider" in providers:
+                preferred.append("DmlExecutionProvider")
+                provider_options.append({})
+
+            if not self._use_cpu:
+                preferred.append("CPUExecutionProvider")
+                provider_options.append({})
+
+            sess_opts = ort.SessionOptions()
+            sess_opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+
+            self.session = ort.InferenceSession(
+                path,
+                sess_options=sess_opts,
+                providers=preferred,
+                provider_options=provider_options,
+            )
             self._loaded = True
 
-            # Detect model format from input shape
-            input_shape = self.session.get_inputs()[0].shape
+            active_providers = self.session.get_providers()
+
+            # Detect model format from output names
             output_names = [o.name for o in self.session.get_outputs()]
+            input_shape = self.session.get_inputs()[0].shape
 
             if "boxes" in output_names or "scores" in output_names:
-                # Qualcomm AI Hub format: separate postprocessed outputs
                 self._qnn_format = True
-                logger.info(f"QNN precompiled model detected (NHWC input, postprocessed output)")
+                logger.info("QNN precompiled model detected (NHWC input, postprocessed output)")
             else:
                 self._qnn_format = False
-                logger.info(f"Standard ONNX model detected (NCHW input, raw output)")
+                logger.info("Standard ONNX model detected (NCHW input, raw output)")
 
             logger.info(f"Watchdog model loaded: {path}")
-            logger.info(f"  Providers: {preferred}")
+            logger.info(f"  Active providers: {active_providers}")
             logger.info(f"  Input: {self.session.get_inputs()[0].name} {input_shape}")
             logger.info(f"  Outputs: {output_names}")
+
+            if "QNNExecutionProvider" in active_providers:
+                logger.info("  NPU acceleration: ACTIVE (Qualcomm HTP)")
+            else:
+                logger.warning("  NPU acceleration: INACTIVE (running on CPU)")
         except Exception as e:
             logger.error(f"Failed to load watchdog model: {e}")
             self._loaded = False

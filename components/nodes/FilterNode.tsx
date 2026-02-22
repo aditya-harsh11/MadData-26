@@ -77,7 +77,7 @@ export default function FilterNode({ id, selected }: NodeProps) {
               onChange={(e) =>
                 updateRule(rule.id, "field", e.target.value)
               }
-              className="bg-transparent text-[10px] text-slate-400 outline-none"
+              className="bg-transparent text-[10px] text-slate-400 outline-none nodrag"
             >
               <option value="label">label</option>
               <option value="confidence">conf</option>
@@ -87,7 +87,7 @@ export default function FilterNode({ id, selected }: NodeProps) {
               onChange={(e) =>
                 updateRule(rule.id, "operator", e.target.value)
               }
-              className="bg-transparent text-[10px] text-pink-400 outline-none"
+              className="bg-transparent text-[10px] text-pink-400 outline-none nodrag"
             >
               <option value="equals">=</option>
               <option value="contains">~</option>
@@ -99,7 +99,7 @@ export default function FilterNode({ id, selected }: NodeProps) {
               onChange={(e) =>
                 updateRule(rule.id, "value", e.target.value)
               }
-              className="flex-1 bg-transparent text-[10px] text-slate-300 outline-none min-w-0"
+              className="flex-1 bg-transparent text-[10px] text-slate-300 outline-none min-w-0 nodrag"
               placeholder="value"
             />
             <button

@@ -23,7 +23,6 @@ export default function TextGenNode({ id, selected }: NodeProps) {
     return () => pipelineSocket.off("text_gen_result", handler);
   }, [id]);
 
-  // Also listen for analysis input from reasoning brain
   useEffect(() => {
     const handler = (data: any) => {
       if (data.analysis) {
@@ -48,10 +47,10 @@ export default function TextGenNode({ id, selected }: NodeProps) {
     <NodeShell
       accent="#3b82f6"
       title="Text Generator"
-      icon={<MessageSquare size={14} />}
+      icon={<MessageSquare size={16} />}
       status={processing ? "running" : "idle"}
       selected={selected}
-      width={280}
+      width={380}
     >
       {/* Input Handle */}
       <Handle
@@ -65,9 +64,9 @@ export default function TextGenNode({ id, selected }: NodeProps) {
       />
 
       {/* Model Badge */}
-      <div className="mb-2">
+      <div className="mb-3">
         <span
-          className="text-[9px] font-mono px-2 py-0.5 rounded-full"
+          className="text-[10px] font-mono px-2.5 py-1 rounded-full"
           style={{
             background: "#3b82f615",
             color: "#3b82f6",
@@ -79,47 +78,47 @@ export default function TextGenNode({ id, selected }: NodeProps) {
       </div>
 
       {/* Prompt Input */}
-      <div className="relative mb-3">
+      <div className="relative mb-4">
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           rows={3}
-          className="w-full bg-[#0a0a0f] border border-[#1e1e2e] rounded-lg px-2.5 py-2 pr-8 text-[11px] text-slate-300 outline-none focus:border-blue-500/40 resize-none leading-relaxed"
+          className="w-full bg-[#0a0a0f] border border-[#1e1e2e] rounded-lg px-3 py-2.5 pr-10 text-sm text-slate-300 outline-none focus:border-blue-500/40 resize-none leading-relaxed nodrag nowheel"
           placeholder="Enter prompt..."
         />
         <button
           onClick={generate}
           disabled={processing || !prompt.trim()}
-          className="absolute right-2 bottom-2 p-1 rounded transition-colors disabled:opacity-30"
+          className="absolute right-3 bottom-3 p-1 rounded transition-colors disabled:opacity-30 nodrag"
           style={{ color: "#3b82f6" }}
         >
           {processing ? (
-            <Loader size={14} className="animate-spin-slow" />
+            <Loader size={16} className="animate-spin-slow" />
           ) : (
-            <Send size={14} />
+            <Send size={16} />
           )}
         </button>
       </div>
 
       {/* Output */}
       <div
-        className="rounded-lg p-2.5"
+        className="rounded-lg p-3"
         style={{
           background: "#0a0a0f",
-          minHeight: 40,
-          maxHeight: 120,
+          minHeight: 60,
+          maxHeight: 200,
           overflowY: "auto",
         }}
       >
         {processing ? (
-          <div className="flex items-center gap-2 text-[11px] text-blue-400">
-            <Loader size={12} className="animate-spin-slow" />
+          <div className="flex items-center gap-2 text-sm text-blue-400">
+            <Loader size={14} className="animate-spin-slow" />
             Generating...
           </div>
         ) : output ? (
-          <p className="text-[11px] text-slate-300 leading-relaxed">{output}</p>
+          <p className="text-sm text-slate-300 leading-relaxed">{output}</p>
         ) : (
-          <p className="text-[10px] text-slate-600 text-center py-1">
+          <p className="text-xs text-slate-600 text-center py-3">
             Output will appear here
           </p>
         )}

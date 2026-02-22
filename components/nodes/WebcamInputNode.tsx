@@ -18,7 +18,7 @@ export default function WebcamInputNode({ id, selected }: NodeProps) {
   const startCapture = useCallback(async () => {
     try {
       setError(null);
-      const capture = new FrameCapture({ fps, width: 640, height: 480 });
+      const capture = new FrameCapture({ fps, width: 1280, height: 720 });
       const stream = await capture.init();
 
       if (videoRef.current) {
@@ -57,14 +57,14 @@ export default function WebcamInputNode({ id, selected }: NodeProps) {
     <NodeShell
       accent="#22d3ee"
       title="Webcam Input"
-      icon={<Camera size={14} />}
+      icon={<Camera size={16} />}
       status={active ? "running" : error ? "error" : "idle"}
       selected={selected}
-      width={280}
+      width={360}
     >
       {/* Video Preview */}
       <div
-        className="relative rounded-lg overflow-hidden mb-3"
+        className="relative rounded-lg overflow-hidden mb-4"
         style={{
           background: "#0a0a0f",
           aspectRatio: "4/3",
@@ -79,19 +79,19 @@ export default function WebcamInputNode({ id, selected }: NodeProps) {
         />
         {!active && (
           <div className="absolute inset-0 flex items-center justify-center">
-            <Camera size={32} className="text-slate-600" />
+            <Camera size={40} className="text-slate-600" />
           </div>
         )}
         {active && (
-          <div className="absolute bottom-1.5 right-1.5 bg-black/70 text-[10px] text-cyan-400 px-1.5 py-0.5 rounded font-mono">
+          <div className="absolute bottom-2 right-2 bg-black/70 text-xs text-cyan-400 px-2 py-1 rounded font-mono">
             {fps} FPS &middot; #{frameCount}
           </div>
         )}
       </div>
 
       {/* FPS Slider */}
-      <div className="flex items-center gap-2 mb-3">
-        <span className="text-[10px] text-slate-500 w-7">FPS</span>
+      <div className="flex items-center gap-3 mb-4">
+        <span className="text-xs text-slate-500 w-8">FPS</span>
         <input
           type="range"
           min={1}
@@ -102,9 +102,9 @@ export default function WebcamInputNode({ id, selected }: NodeProps) {
             setFps(v);
             if (captureRef.current) captureRef.current.fps = v;
           }}
-          className="flex-1 h-1 accent-cyan-400"
+          className="flex-1 h-1.5 accent-cyan-400 nodrag nowheel"
         />
-        <span className="text-[10px] text-slate-400 font-mono w-4 text-right">
+        <span className="text-xs text-slate-400 font-mono w-6 text-right">
           {fps}
         </span>
       </div>
@@ -112,19 +112,19 @@ export default function WebcamInputNode({ id, selected }: NodeProps) {
       {/* Controls */}
       <button
         onClick={active ? stopCapture : startCapture}
-        className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-md text-xs font-medium transition-colors"
+        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-md text-sm font-medium transition-colors nodrag"
         style={{
           background: active ? "#ef444420" : "#22d3ee15",
           color: active ? "#ef4444" : "#22d3ee",
           border: `1px solid ${active ? "#ef444430" : "#22d3ee25"}`,
         }}
       >
-        {active ? <Square size={12} /> : <Play size={12} />}
+        {active ? <Square size={14} /> : <Play size={14} />}
         {active ? "Stop" : "Start Capture"}
       </button>
 
       {error && (
-        <p className="text-[10px] text-red-400 mt-2">{error}</p>
+        <p className="text-xs text-red-400 mt-3">{error}</p>
       )}
 
       {/* Output Handle */}

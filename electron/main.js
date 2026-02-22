@@ -8,17 +8,22 @@ let pythonProcess;
 function spawnBackend() {
   const backendDir = path.join(__dirname, "..", "backend");
 
-  // Prefer native ARM64 Python for Qualcomm NPU acceleration
-  const arm64Python = path.join(
-    process.env.LOCALAPPDATA || "",
-    "Programs",
-    "Python",
-    "Python313-arm64",
-    "python.exe"
-  );
   const fs = require("fs");
+  // Prefer native ARM64 Python for Qualcomm NPU acceleration
+  const arm64Candidates = [
+    process.env.SNAPFLOW_PYTHON,
+    "C:\\Users\\hackathon user\\AppData\\Local\\Programs\\Python\\Python313-arm64\\python.exe",
+    path.join(
+      process.env.LOCALAPPDATA || "",
+      "Programs",
+      "Python",
+      "Python313-arm64",
+      "python.exe"
+    ),
+  ].filter(Boolean);
+  const arm64Python = arm64Candidates.find((p) => fs.existsSync(p));
   const pythonCmd =
-    process.platform === "win32" && fs.existsSync(arm64Python)
+    process.platform === "win32" && arm64Python
       ? arm64Python
       : process.platform === "win32"
       ? "python"

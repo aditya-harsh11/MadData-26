@@ -15,12 +15,12 @@ import {
 import { NODE_CATALOG, type NodeTypeInfo } from "@/lib/types";
 
 const iconMap: Record<string, React.ReactNode> = {
-  Camera: <Camera size={16} />,
-  Eye: <Eye size={16} />,
-  Brain: <Brain size={16} />,
-  Filter: <Filter size={16} />,
-  MessageSquare: <MessageSquare size={16} />,
-  Zap: <Zap size={16} />,
+  Camera: <Camera size={18} />,
+  Eye: <Eye size={18} />,
+  Brain: <Brain size={18} />,
+  Filter: <Filter size={18} />,
+  MessageSquare: <MessageSquare size={18} />,
+  Zap: <Zap size={18} />,
 };
 
 const categoryLabels: Record<string, string> = {
@@ -56,49 +56,50 @@ export default function Sidebar({ backendConnected }: SidebarProps) {
     <aside
       className="flex flex-col h-full border-r"
       style={{
-        width: 220,
+        width: 280,
+        minWidth: 280,
         background: "#0d0d14",
         borderColor: "#1e1e2e",
       }}
     >
       {/* Logo */}
       <div
-        className="flex items-center gap-2.5 px-4 py-4 border-b"
+        className="flex items-center gap-3 px-5 py-5 border-b"
         style={{ borderColor: "#1e1e2e" }}
       >
         <div
-          className="flex items-center justify-center w-8 h-8 rounded-lg"
+          className="flex items-center justify-center w-10 h-10 rounded-lg"
           style={{
             background: "linear-gradient(135deg, #22d3ee20, #a855f720)",
             border: "1px solid #22d3ee30",
           }}
         >
-          <Cpu size={16} className="text-cyan-400" />
+          <Cpu size={20} className="text-cyan-400" />
         </div>
         <div>
-          <h1 className="text-sm font-bold text-slate-200 tracking-tight">
+          <h1 className="text-base font-bold text-slate-200 tracking-tight">
             SnapFlow
           </h1>
-          <p className="text-[9px] text-slate-500 font-mono">
+          <p className="text-[11px] text-slate-500 font-mono">
             Qualcomm NPU Pipeline
           </p>
         </div>
       </div>
 
       {/* Node Palette */}
-      <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+      <div className="flex-1 overflow-y-auto px-4 py-4 space-y-5">
         {Object.entries(grouped).map(([category, nodes]) => (
           <div key={category}>
-            <h2 className="text-[9px] font-semibold uppercase tracking-widest text-slate-500 mb-2 px-1">
+            <h2 className="text-[11px] font-semibold uppercase tracking-widest text-slate-500 mb-2.5 px-1">
               {categoryLabels[category]}
             </h2>
-            <div className="space-y-1">
+            <div className="space-y-1.5">
               {nodes.map((node) => (
                 <div
                   key={node.type}
                   draggable
                   onDragStart={(e) => onDragStart(e, node.type)}
-                  className="sidebar-node-drag flex items-center gap-2.5 px-2.5 py-2 rounded-lg transition-all hover:scale-[1.02]"
+                  className="sidebar-node-drag flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all hover:scale-[1.02]"
                   style={{
                     background: "#13131a",
                     border: "1px solid #1e1e2e",
@@ -118,7 +119,7 @@ export default function Sidebar({ backendConnected }: SidebarProps) {
                   }}
                 >
                   <div
-                    className="flex items-center justify-center w-7 h-7 rounded-md flex-shrink-0"
+                    className="flex items-center justify-center w-9 h-9 rounded-md flex-shrink-0"
                     style={{
                       background: node.accent + "15",
                       color: node.accent,
@@ -127,10 +128,10 @@ export default function Sidebar({ backendConnected }: SidebarProps) {
                     {iconMap[node.icon]}
                   </div>
                   <div className="min-w-0">
-                    <p className="text-[11px] font-medium text-slate-300 truncate">
+                    <p className="text-sm font-medium text-slate-300 truncate">
                       {node.label}
                     </p>
-                    <p className="text-[9px] text-slate-500 truncate">
+                    <p className="text-[11px] text-slate-500 truncate">
                       {node.description}
                     </p>
                   </div>
@@ -143,20 +144,20 @@ export default function Sidebar({ backendConnected }: SidebarProps) {
 
       {/* Status Bar */}
       <div
-        className="px-4 py-3 border-t flex items-center gap-2"
+        className="px-5 py-4 border-t flex items-center gap-2.5"
         style={{ borderColor: "#1e1e2e" }}
       >
         {backendConnected ? (
           <>
-            <Wifi size={12} className="text-emerald-400" />
-            <span className="text-[10px] text-emerald-400 font-medium">
+            <Wifi size={16} className="text-emerald-400" />
+            <span className="text-sm text-emerald-400 font-medium">
               Backend Connected
             </span>
           </>
         ) : (
           <>
-            <WifiOff size={12} className="text-red-400" />
-            <span className="text-[10px] text-red-400 font-medium">
+            <WifiOff size={16} className="text-red-400" />
+            <span className="text-sm text-red-400 font-medium">
               Disconnected
             </span>
           </>

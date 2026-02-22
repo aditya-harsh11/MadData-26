@@ -22,6 +22,21 @@ from fastapi.middleware.cors import CORSMiddleware
 from watchdog import Watchdog
 from reasoning import ReasoningBrain
 
+# ─── Qualcomm AI Hub Configuration ───
+QAI_HUB_TOKEN = os.environ.get("QAI_HUB_API_TOKEN", "fi3l2clm1oimw3f1aj3fl6zthbqtihxftki0z894")
+try:
+    import qai_hub
+    qai_hub.set_session_token(QAI_HUB_TOKEN)
+except (ImportError, Exception):
+    pass
+
+# ─── Nexa NPU License ───
+NEXA_LICENSE = os.environ.get(
+    "NEXA_TOKEN",
+    "key/eyJhY2NvdW50Ijp7ImlkIjoiNDI1Y2JiNWQtNjk1NC00NDYxLWJiOWMtYzhlZjBiY2JlYzA2In0sInByb2R1Y3QiOnsiaWQiOiIxNDY0ZTk1MS04MGM5LTRjN2ItOWZmYS05MmYyZmQzNmE5YTMifSwicG9saWN5Ijp7ImlkIjoiYzI1YjE3OTUtNTY0OC00NGY1LTgxMmUtNGQ3ZWM3ZjFjYWI0IiwiZHVyYXRpb24iOjI1OTIwMDB9LCJ1c2VyIjp7ImlkIjoiZDI2MGIwZjAtMjRkNy00NWQ0LThkMzUtZmJhODQ5NGI4YTdjIiwiZW1haWwiOiJuaXNoYWRzY3JhdGNoQGdtYWlsLmNvbSJ9LCJsaWNlbnNlIjp7ImlkIjoiN2JkNjlkNmUtOTk1NC00OGY2LTgxNWEtOTIyZTZhNTE0ZmY1IiwiY3JlYXRlZCI6IjIwMjYtMDItMjFUMjM6Mzk6MjguNDgyWiIsImV4cGlyeSI6IjIwMjYtMDMtMjNUMjM6Mzk6MjguNDgyWiJ9fQ==.igYAIuiLvyKcDKR2CHo3lsmc1pungm4BbfMO5dxXwq3z3GlDT55YnTeo7GkqAydwUYQtwN_fS9XcjcvyMvNHBA==",
+)
+os.environ["NEXA_TOKEN"] = NEXA_LICENSE
+
 # ─── Logging ───
 logging.basicConfig(
     level=logging.INFO,
@@ -34,11 +49,13 @@ logger = logging.getLogger("snapflow")
 MODEL_DIR = Path(__file__).parent / "models"
 MODEL_DIR.mkdir(exist_ok=True)
 
-# Standard ONNX model — onnxruntime-qnn JIT-compiles it for the Qualcomm NPU
-# via QNNExecutionProvider when running under native ARM64 Python.
-LOCAL_MODEL = MODEL_DIR / "yolov8n.onnx"
+STD_MODEL = MODEL_DIR / "yolov8n.onnx"
+LOCAL_MODEL = STD_MODEL
 watchdog = Watchdog(model_path=str(LOCAL_MODEL), confidence=0.45)
 brain = ReasoningBrain()
+
+DEFAULT_PROMPT = "Describe what you see. If there is any safety concern, explain it."
+REASONING_INTERVAL_DEFAULT = 5
 
 
 @asynccontextmanager
@@ -48,7 +65,6 @@ async def lifespan(app: FastAPI):
     logger.info("  SnapFlow Backend Starting")
     logger.info("=" * 50)
 
-    # Load models in background thread to avoid blocking
     loop = asyncio.get_event_loop()
 
     if not watchdog.loaded:
@@ -57,20 +73,21 @@ async def lifespan(app: FastAPI):
             "Place a YOLOv8-nano ONNX model there, or detections will be empty."
         )
 
-    # Try loading Nexa SDK models (non-blocking)
-    try:
-        await loop.run_in_executor(None, brain.load_vlm)
-    except Exception as e:
-        logger.warning(f"Could not load VLM: {e}")
+    async def _load_brain():
+        try:
+            await loop.run_in_executor(None, brain.load_vlm)
+        except Exception as e:
+            logger.warning(f"Could not load VLM: {e}")
+        try:
+            await loop.run_in_executor(None, brain.load_llm)
+        except Exception as e:
+            logger.warning(f"Could not load LLM: {e}")
+        logger.info(f"VLM loaded:      {brain.vlm_loaded}")
+        logger.info(f"LLM loaded:      {brain.llm_loaded}")
 
-    try:
-        await loop.run_in_executor(None, brain.load_llm)
-    except Exception as e:
-        logger.warning(f"Could not load LLM: {e}")
+    asyncio.create_task(_load_brain())
 
     logger.info(f"Watchdog loaded: {watchdog.loaded}")
-    logger.info(f"VLM loaded:      {brain.vlm_loaded}")
-    logger.info(f"LLM loaded:      {brain.llm_loaded}")
     logger.info("Backend ready — waiting for WebSocket connections")
 
     yield
@@ -91,11 +108,19 @@ app.add_middleware(
 # ─── Health Check ───
 @app.get("/health")
 async def health():
+    active_providers = []
+    if watchdog.session:
+        active_providers = watchdog.session.get_providers()
+    npu_active = "QNNExecutionProvider" in active_providers
+
     return {
         "status": "ok",
         "watchdog_loaded": watchdog.loaded,
         "vlm_loaded": brain.vlm_loaded,
         "llm_loaded": brain.llm_loaded,
+        "npu_active": npu_active,
+        "execution_providers": active_providers,
+        "model_path": str(LOCAL_MODEL),
     }
 
 
@@ -136,10 +161,24 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# ─── Per-client state ───
+_client_state: dict[str, dict] = {}
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     cid = await manager.connect(ws)
+
+    _client_state[cid] = {
+        "latest_frame": None,
+        "latest_detections": [],
+        "prompt": DEFAULT_PROMPT,
+        "interval": REASONING_INTERVAL_DEFAULT,
+        "reasoning_task": None,
+    }
+
+    task = asyncio.create_task(reasoning_loop(cid))
+    _client_state[cid]["reasoning_task"] = task
 
     try:
         while True:
@@ -154,18 +193,29 @@ async def websocket_endpoint(ws: WebSocket):
                 await handle_reasoning(cid, payload)
             elif msg_type == "text_gen":
                 await handle_text_gen(cid, payload)
+            elif msg_type == "config":
+                await handle_config(cid, payload)
             else:
                 logger.warning(f"Unknown message type: {msg_type}")
 
     except WebSocketDisconnect:
-        manager.disconnect(cid)
+        pass
     except Exception as e:
         logger.error(f"WebSocket error ({cid}): {e}")
+    finally:
+        if cid in _client_state:
+            t = _client_state[cid].get("reasoning_task")
+            if t:
+                t.cancel()
+            del _client_state[cid]
+        brain.clear_client(cid)
         manager.disconnect(cid)
 
 
+# ─── Frame handler (Tier 1 — Watchdog) ───
+
 async def handle_frame(cid: str, payload: dict):
-    """Tier 1 — Run Watchdog detection on incoming frame."""
+    """Run Watchdog detection on incoming frame and store it for reasoning."""
     image_b64 = payload.get("image", "")
     node_id = payload.get("node_id", "")
 
@@ -183,34 +233,110 @@ async def handle_frame(cid: str, payload: dict):
         "frame_id": str(uuid.uuid4())[:8],
     })
 
-    # Check for trigger conditions
-    trigger_labels = [d["label"] for d in detections if d["confidence"] > 0.6]
-    if trigger_labels:
-        await manager.send(cid, "trigger_reasoning", {
-            "labels": trigger_labels,
-            "image": image_b64,
-        })
+    if cid in _client_state:
+        _client_state[cid]["latest_frame"] = image_b64
+        _client_state[cid]["latest_detections"] = detections
 
+
+# ─── Reasoning loop (Tier 2 — VLM) ───
+
+async def reasoning_loop(cid: str):
+    """Periodic VLM reasoning. Runs immediately once a frame arrives, then
+    repeats every `interval` seconds. Uses short sleep ticks so interval
+    changes take effect right away."""
+    logger.info(f"Reasoning loop started for client {cid}")
+    try:
+        # Wait for first frame (poll every 0.5s so we start fast)
+        while cid in _client_state:
+            if _client_state[cid].get("latest_frame"):
+                break
+            await asyncio.sleep(0.5)
+
+        while cid in _client_state:
+            state = _client_state[cid]
+            frame = state.get("latest_frame")
+            if not frame:
+                await asyncio.sleep(0.5)
+                continue
+
+            prompt = state.get("prompt", DEFAULT_PROMPT)
+
+            await manager.send(cid, "trigger_reasoning", {})
+
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None,
+                brain.analyze_frame,
+                frame,
+                prompt,
+                cid,
+            )
+
+            analysis = result.get("analysis", "")
+            logger.info(f"Reasoning result for {cid}: {analysis[:100]}")
+
+            await manager.send(cid, "reasoning", result)
+            await manager.send(cid, "action_trigger", {
+                "analysis": analysis,
+            })
+
+            # Sleep in 0.5s ticks so interval changes react immediately
+            interval = state.get("interval", REASONING_INTERVAL_DEFAULT)
+            elapsed = 0.0
+            while elapsed < interval and cid in _client_state:
+                await asyncio.sleep(0.5)
+                elapsed += 0.5
+                interval = _client_state.get(cid, {}).get("interval", interval)
+
+    except asyncio.CancelledError:
+        logger.info(f"Reasoning loop cancelled for {cid}")
+    except Exception as e:
+        logger.error(f"Reasoning loop error for {cid}: {e}")
+
+
+# ─── Config handler ───
+
+async def handle_config(cid: str, payload: dict):
+    """Handle configuration updates from the frontend."""
+    if cid not in _client_state:
+        return
+
+    if "reasoning_interval" in payload:
+        new_interval = max(5, min(300, int(payload["reasoning_interval"])))
+        _client_state[cid]["interval"] = new_interval
+        logger.info(f"Client {cid} reasoning interval set to {new_interval}s")
+
+    if "reasoning_prompt" in payload:
+        new_prompt = str(payload["reasoning_prompt"]).strip()
+        if new_prompt:
+            _client_state[cid]["prompt"] = new_prompt
+            logger.info(f"Client {cid} prompt set to: {new_prompt[:80]}")
+
+    await manager.send(cid, "config_ack", {
+        "reasoning_interval": _client_state[cid]["interval"],
+        "reasoning_prompt": _client_state[cid]["prompt"],
+    })
+
+
+# ─── On-demand reasoning handler ───
 
 async def handle_reasoning(cid: str, payload: dict):
-    """Tier 2 — Run VLM reasoning on a triggered frame."""
+    """Run VLM reasoning on a specific frame+prompt sent by the frontend."""
     image_b64 = payload.get("image", "")
-    prompt = payload.get("prompt", "Describe what you see.")
-    trigger_label = payload.get("trigger_label", "")
+    prompt = payload.get("prompt", DEFAULT_PROMPT)
 
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
-        None, brain.analyze_frame, image_b64, prompt, trigger_label
+        None, brain.analyze_frame, image_b64, prompt, cid
     )
 
     await manager.send(cid, "reasoning", result)
-
-    # Also forward to action nodes
     await manager.send(cid, "action_trigger", {
         "analysis": result.get("analysis", ""),
-        "trigger_label": trigger_label,
     })
 
+
+# ─── Text generation handler ───
 
 async def handle_text_gen(cid: str, payload: dict):
     """Text generation via Llama-3.2-3B."""
@@ -235,6 +361,6 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=port,
-        reload=True,
+        reload=False,
         log_level="info",
     )

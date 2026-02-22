@@ -32,9 +32,10 @@ export default function WatchdogNode({ id, selected }: NodeProps) {
     <NodeShell
       accent="#f59e0b"
       title="Watchdog"
-      icon={<Eye size={14} />}
+      icon={<Eye size={16} />}
       status={active ? "running" : "idle"}
       selected={selected}
+      width={360}
     >
       {/* Input Handle */}
       <Handle
@@ -49,24 +50,24 @@ export default function WatchdogNode({ id, selected }: NodeProps) {
 
       {/* Detection Feed */}
       <div
-        className="rounded-lg p-2 mb-3 space-y-1"
+        className="rounded-lg p-3 mb-4 space-y-1.5"
         style={{
           background: "#0a0a0f",
-          minHeight: 60,
-          maxHeight: 100,
+          minHeight: 80,
+          maxHeight: 200,
           overflowY: "auto",
         }}
       >
         {detections.length === 0 ? (
-          <p className="text-[10px] text-slate-600 text-center py-3">
+          <p className="text-sm text-slate-600 text-center py-4">
             Waiting for detections...
           </p>
         ) : (
           detections.map((d, i) => (
             <div key={i} className="flex items-center justify-between">
-              <span className="text-[11px] text-slate-300">{d.label}</span>
+              <span className="text-sm text-slate-300">{d.label}</span>
               <span
-                className="text-[10px] font-mono px-1.5 py-0.5 rounded"
+                className="text-xs font-mono px-2 py-0.5 rounded"
                 style={{
                   background:
                     d.confidence > 0.8
@@ -90,29 +91,29 @@ export default function WatchdogNode({ id, selected }: NodeProps) {
       </div>
 
       {/* Confidence Threshold */}
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-[10px] text-slate-500 w-10">Conf.</span>
+      <div className="flex items-center gap-3 mb-3">
+        <span className="text-xs text-slate-500 w-12">Conf.</span>
         <input
           type="range"
           min={10}
           max={95}
           value={confidence * 100}
           onChange={(e) => setConfidence(Number(e.target.value) / 100)}
-          className="flex-1 h-1 accent-amber-400"
+          className="flex-1 h-1.5 accent-amber-400 nodrag nowheel"
         />
-        <span className="text-[10px] text-slate-400 font-mono w-7 text-right">
+        <span className="text-xs text-slate-400 font-mono w-10 text-right">
           {(confidence * 100).toFixed(0)}%
         </span>
       </div>
 
       {/* Trigger Label */}
-      <div className="flex items-center gap-2">
-        <span className="text-[10px] text-slate-500 w-10">Trigger</span>
+      <div className="flex items-center gap-3">
+        <span className="text-xs text-slate-500 w-12">Trigger</span>
         <input
           type="text"
           value={triggerLabel}
           onChange={(e) => setTriggerLabel(e.target.value)}
-          className="flex-1 bg-[#0a0a0f] border border-[#1e1e2e] rounded px-2 py-1 text-[11px] text-slate-300 outline-none focus:border-amber-500/40"
+          className="flex-1 bg-[#0a0a0f] border border-[#1e1e2e] rounded-md px-3 py-1.5 text-sm text-slate-300 outline-none focus:border-amber-500/40 nodrag"
           placeholder="e.g. person"
         />
       </div>

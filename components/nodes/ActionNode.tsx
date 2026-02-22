@@ -15,38 +15,63 @@ export default function ActionNode({ id, selected }: NodeProps) {
   const [triggerCount, setTriggerCount] = useState(0);
 
   useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
+
+  useEffect(() => {
     const handler = (data: any) => {
       const timestamp = new Date().toLocaleTimeString();
       const message = data.analysis || data.trigger_label || "Triggered";
 
       setTriggerCount((c) => c + 1);
-      setLogs((prev) => [`[${timestamp}] ${message}`, ...prev].slice(0, 50));
+      setLogs((prev) => [`[${timestamp}] ${message}`, ...prev].slice(0, 100));
 
       if (actionType === "alert") {
-        // Desktop notification (works in Electron)
         if ("Notification" in window && Notification.permission === "granted") {
           new Notification("SnapFlow Alert", { body: message });
         }
       }
     };
 
+    const changeHandler = (data: any) => {
+      const timestamp = new Date().toLocaleTimeString();
+      const message = data.message || "Scene changed";
+
+      setTriggerCount((c) => c + 1);
+      setLogs((prev) => [
+        `[${timestamp}] ⚠ CHANGE: ${message}`,
+        ...prev,
+      ].slice(0, 100));
+
+      if ("Notification" in window && Notification.permission === "granted") {
+        new Notification("SnapFlow — Scene Changed", { body: message });
+      }
+    };
+
     pipelineSocket.on("action_trigger", handler);
-    return () => pipelineSocket.off("action_trigger", handler);
+    pipelineSocket.on("change_alert", changeHandler);
+    return () => {
+      pipelineSocket.off("action_trigger", handler);
+      pipelineSocket.off("change_alert", changeHandler);
+    };
   }, [actionType]);
 
   const actionIcons = {
-    alert: <Bell size={12} />,
-    log: <FileText size={12} />,
-    webhook: <Webhook size={12} />,
+    alert: <Bell size={14} />,
+    log: <FileText size={14} />,
+    webhook: <Webhook size={14} />,
   };
 
   return (
     <NodeShell
       accent="#10b981"
       title="Action"
-      icon={<Zap size={14} />}
+      icon={<Zap size={16} />}
       status={triggerCount > 0 ? "running" : "idle"}
       selected={selected}
+      width={400}
     >
       {/* Input Handle */}
       <Handle
@@ -60,12 +85,12 @@ export default function ActionNode({ id, selected }: NodeProps) {
       />
 
       {/* Action Type Selector */}
-      <div className="flex gap-1 mb-3">
+      <div className="flex gap-1.5 mb-4">
         {(["alert", "log", "webhook"] as ActionType[]).map((t) => (
           <button
             key={t}
             onClick={() => setActionType(t)}
-            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-colors"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors nodrag"
             style={{
               background: actionType === t ? "#10b98120" : "#0a0a0f",
               color: actionType === t ? "#10b981" : "#64748b",
@@ -86,28 +111,32 @@ export default function ActionNode({ id, selected }: NodeProps) {
           type="text"
           value={webhookUrl}
           onChange={(e) => setWebhookUrl(e.target.value)}
-          className="w-full bg-[#0a0a0f] border border-[#1e1e2e] rounded px-2 py-1 text-[11px] text-slate-300 outline-none focus:border-emerald-500/40 mb-3"
+          className="w-full bg-[#0a0a0f] border border-[#1e1e2e] rounded-md px-3 py-2 text-sm text-slate-300 outline-none focus:border-emerald-500/40 mb-4 nodrag"
           placeholder="https://..."
         />
       )}
 
-      {/* Log Feed */}
+      {/* Log Feed — big, readable, scrollable */}
       <div
-        className="rounded-lg p-2 space-y-0.5"
+        className="rounded-lg p-3 space-y-1 nodrag nowheel"
         style={{
           background: "#0a0a0f",
-          minHeight: 50,
-          maxHeight: 100,
+          minHeight: 120,
+          maxHeight: 300,
           overflowY: "auto",
         }}
       >
         {logs.length === 0 ? (
-          <p className="text-[10px] text-slate-600 text-center py-2">
+          <p className="text-sm text-slate-600 text-center py-4">
             No triggers yet
           </p>
         ) : (
           logs.map((log, i) => (
-            <p key={i} className="text-[10px] text-slate-400 font-mono truncate">
+            <p
+              key={i}
+              className="text-sm text-slate-300 font-mono leading-relaxed"
+              style={{ wordBreak: "break-word" }}
+            >
               {log}
             </p>
           ))
@@ -115,8 +144,8 @@ export default function ActionNode({ id, selected }: NodeProps) {
       </div>
 
       {/* Trigger counter */}
-      <div className="mt-2 text-right">
-        <span className="text-[9px] font-mono text-emerald-500/70">
+      <div className="mt-3 text-right">
+        <span className="text-xs font-mono text-emerald-500/70">
           {triggerCount} triggers
         </span>
       </div>
