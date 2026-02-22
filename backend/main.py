@@ -92,6 +92,7 @@ async def lifespan(app: FastAPI):
 
     yield
 
+    brain.shutdown()
     logger.info("Backend shutting down")
 
 

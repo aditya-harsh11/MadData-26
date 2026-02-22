@@ -1,65 +1,73 @@
 """
-Reasoning Brain — Heavy multimodal inference tier.
+Reasoning Brain — Multimodal inference via Nexa serve REST API.
 
-Uses the Nexa SDK (nexaai) to run OmniNeural-4B (VLM) on the Qualcomm NPU
-for rich scene understanding, and Llama-3.2-3B for text generation.
+Uses the OpenAI-compatible API at http://127.0.0.1:18181 served by `nexa serve`.
+OmniNeural-4B (VLM) runs on the Qualcomm NPU for scene understanding.
+Images are passed as base64 data URIs — no file I/O, no ffmpeg.
 """
 
-import io
 import os
 import time
-import base64
 import logging
-import threading
-from pathlib import Path
-
-from PIL import Image as PILImage
+import subprocess
+import httpx
 
 logger = logging.getLogger("snapflow.reasoning")
 
-DEBUG_DIR = Path(__file__).parent / "debug_frames"
-
-IMAGE_CACHE = Path("C:/snapflow_cache")
-IMAGE_CACHE.mkdir(exist_ok=True)
+NEXA_API = "http://127.0.0.1:18181"
+VLM_MODEL = "NexaAI/OmniNeural-4B"
 
 
 class ReasoningBrain:
-    """Tier 2 — Nexa SDK multimodal reasoning engine on Qualcomm NPU."""
 
     def __init__(self):
-        self._vlm_model_name: str = "NexaAI/OmniNeural-4B"
         self._vlm_loaded = False
-        self._vlm_lock = threading.Lock()
-        self.llm = None
         self._llm_loaded = False
+        self._serve_proc = None
 
-    # ── Model loading ─────────────────────────────────────────────
+    # ── Start / check nexa serve ──────────────────────────────────
 
     def load_vlm(self, model_name: str = "NexaAI/OmniNeural-4B"):
-        try:
-            import nexaai
-            self._vlm_model_name = model_name
-            logger.info(f"Loading VLM (warmup): {model_name}")
-            vlm = nexaai.VLM.from_(model_name, config=nexaai.ModelConfig())
-            del vlm
+        global VLM_MODEL
+        VLM_MODEL = model_name
+
+        if self._check_serve():
             self._vlm_loaded = True
-            logger.info(f"VLM ready: {model_name}")
-        except ImportError:
-            logger.warning("Nexa SDK not installed.")
-        except Exception as e:
-            logger.error(f"Failed to load VLM: {e}")
+            logger.info(f"nexa serve already running — VLM ready ({model_name})")
+            return
+
+        logger.info("Starting nexa serve …")
+        try:
+            self._serve_proc = subprocess.Popen(
+                ["nexa", "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except FileNotFoundError:
+            logger.error("'nexa' CLI not found on PATH")
+            return
+
+        for i in range(60):
+            time.sleep(1)
+            if self._check_serve():
+                self._vlm_loaded = True
+                logger.info(f"nexa serve ready after {i+1}s — VLM ready ({model_name})")
+                return
+
+        logger.error("nexa serve did not become healthy within 60 s")
 
     def load_llm(self, model_name: str = "NexaAI/Llama-3.2-3B"):
+        self._llm_loaded = self._vlm_loaded
+        if self._llm_loaded:
+            logger.info(f"LLM available via nexa serve ({model_name})")
+
+    @staticmethod
+    def _check_serve() -> bool:
         try:
-            import nexaai
-            logger.info(f"Loading LLM: {model_name}")
-            self.llm = nexaai.LLM.from_(model_name)
-            self._llm_loaded = True
-            logger.info(f"LLM loaded: {model_name}")
-        except ImportError:
-            logger.warning("Nexa SDK not installed.")
-        except Exception as e:
-            logger.error(f"Failed to load LLM: {e}")
+            r = httpx.get(f"{NEXA_API}/v1/models", timeout=2)
+            return r.status_code == 200
+        except Exception:
+            return False
 
     @property
     def vlm_loaded(self) -> bool:
@@ -69,27 +77,7 @@ class ReasoningBrain:
     def llm_loaded(self) -> bool:
         return self._llm_loaded
 
-    # ── Image prep ────────────────────────────────────────────────
-
-    @staticmethod
-    def _save_frame(base64_image: str) -> str:
-        if "," in base64_image:
-            base64_image = base64_image.split(",", 1)[1]
-
-        img_bytes = base64.b64decode(base64_image)
-        pil = PILImage.open(io.BytesIO(img_bytes)).convert("RGB")
-
-        MAX_W = 640
-        w, h = pil.size
-        if w > MAX_W:
-            pil = pil.resize((MAX_W, round(h * MAX_W / w)), PILImage.LANCZOS)
-
-        out = str(IMAGE_CACHE / "frame.jpg")
-        pil.save(out, format="JPEG", quality=95)
-        logger.info(f"Frame: {w}x{h} → {pil.size[0]}x{pil.size[1]}")
-        return out
-
-    # ── VLM inference — fresh instance every call ─────────────────
+    # ── VLM inference via REST API ────────────────────────────────
 
     def analyze_frame(
         self,
@@ -104,43 +92,40 @@ class ReasoningBrain:
         if not base64_image:
             return {"analysis": "[No frame received]", "latency_ms": 0}
 
-        image_path = self._save_frame(base64_image)
+        if not base64_image.startswith("data:"):
+            image_url = f"data:image/jpeg;base64,{base64_image}"
+        else:
+            image_url = base64_image
 
-        with self._vlm_lock:
-            try:
-                import nexaai
+        payload = {
+            "model": VLM_MODEL,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_url}},
+                    ],
+                }
+            ],
+            "max_tokens": 256,
+            "stream": False,
+        }
 
-                vlm = nexaai.VLM.from_(
-                    self._vlm_model_name, config=nexaai.ModelConfig()
-                )
-
-                messages = [
-                    nexaai.VlmChatMessage(
-                        role="user",
-                        contents=[
-                            nexaai.VlmContent(type="text", text=prompt),
-                            nexaai.VlmContent(type="image", text=image_path),
-                        ],
-                    )
-                ]
-                formatted = vlm.apply_chat_template(messages)
-
-                gen_config = nexaai.GenerationConfig(
-                    max_tokens=256,
-                    image_paths=[image_path],
-                )
-
-                logger.info(f"VLM image: {image_path}")
-                logger.info(f"VLM prompt: {prompt[:200]}")
-
-                result = vlm.generate(formatted, config=gen_config)
-                analysis_text = result.full_text
-
-                del vlm
-
-            except Exception as e:
-                logger.error(f"VLM inference error: {e}", exc_info=True)
-                analysis_text = f"[VLM error: {e}]"
+        try:
+            resp = httpx.post(
+                f"{NEXA_API}/v1/chat/completions",
+                json=payload,
+                timeout=120,
+            )
+            data = resp.json()
+            analysis_text = data["choices"][0]["message"]["content"]
+        except httpx.TimeoutException:
+            logger.error("VLM API timeout (120 s)")
+            analysis_text = "[VLM timeout]"
+        except Exception as e:
+            logger.error(f"VLM API error: {e}")
+            analysis_text = f"[VLM error: {e}]"
 
         dt = (time.perf_counter() - t0) * 1000
         logger.info(f"VLM done: {dt:.0f}ms | {analysis_text[:120]}")
@@ -150,7 +135,7 @@ class ReasoningBrain:
     def clear_client(self, client_id: str):
         pass
 
-    # ── LLM text generation ───────────────────────────────────────
+    # ── LLM text generation via REST API ──────────────────────────
 
     def generate_text(self, prompt: str, max_tokens: int = 256) -> dict:
         t0 = time.perf_counter()
@@ -158,16 +143,31 @@ class ReasoningBrain:
         if not self._llm_loaded:
             return {"text": "[LLM not loaded]", "latency_ms": 0}
 
+        payload = {
+            "model": VLM_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+
         try:
-            import nexaai
-            result = self.llm.generate(
-                prompt, config=nexaai.GenerationConfig(max_tokens=max_tokens)
+            resp = httpx.post(
+                f"{NEXA_API}/v1/chat/completions",
+                json=payload,
+                timeout=120,
             )
-            text = result.full_text
+            data = resp.json()
+            text = data["choices"][0]["message"]["content"]
         except Exception as e:
-            logger.error(f"LLM inference error: {e}")
+            logger.error(f"LLM API error: {e}")
             text = f"[LLM error: {e}]"
 
         dt = (time.perf_counter() - t0) * 1000
         logger.info(f"LLM done: {dt:.0f}ms")
         return {"text": text, "latency_ms": round(dt, 1)}
+
+    def shutdown(self):
+        if self._serve_proc:
+            logger.info("Stopping nexa serve …")
+            self._serve_proc.terminate()
+            self._serve_proc = None
