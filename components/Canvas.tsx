@@ -17,77 +17,88 @@ import ReactFlow, {
 import "reactflow/dist/style.css";
 
 import Sidebar from "./Sidebar";
-import WebcamInputNode from "./nodes/WebcamInputNode";
-import WatchdogNode from "./nodes/WatchdogNode";
-import ReasoningBrainNode from "./nodes/ReasoningBrainNode";
+import CameraNode from "./nodes/CameraNode";
+import VisualLlmNode from "./nodes/VisualLlmNode";
+import LogicNode from "./nodes/LogicNode";
+import LlmNode from "./nodes/LlmNode";
 import ActionNode from "./nodes/ActionNode";
-import TextGenNode from "./nodes/TextGenNode";
-import FilterNode from "./nodes/FilterNode";
 import { pipelineSocket } from "@/lib/websocket";
 
 const nodeTypes = {
-  webcamInput: WebcamInputNode,
-  watchdog: WatchdogNode,
-  reasoningBrain: ReasoningBrainNode,
+  camera: CameraNode,
+  visualLlm: VisualLlmNode,
+  logic: LogicNode,
+  llm: LlmNode,
   action: ActionNode,
-  textGen: TextGenNode,
-  filter: FilterNode,
 };
+
+const VALID_NODE_TYPES = new Set<string>(Object.keys(nodeTypes));
 
 const defaultNodes: Node[] = [
   {
-    id: "webcam-1",
-    type: "webcamInput",
+    id: "camera-1",
+    type: "camera",
     position: { x: 50, y: 200 },
     data: {},
   },
   {
-    id: "watchdog-1",
-    type: "watchdog",
-    position: { x: 500, y: 180 },
-    data: {},
+    id: "vlm-1",
+    type: "visualLlm",
+    position: { x: 500, y: 150 },
+    data: {
+      prompt:
+        "Describe any safety concerns you see. Mention if anyone is not wearing required safety gear.",
+      interval: 10,
+    },
   },
   {
-    id: "brain-1",
-    type: "reasoningBrain",
-    position: { x: 960, y: 150 },
-    data: {},
+    id: "logic-1",
+    type: "logic",
+    position: { x: 1020, y: 180 },
+    data: {
+      conditions: [
+        { id: "1", operator: "contains", value: "danger" },
+        { id: "2", operator: "contains", value: "hazard" },
+        { id: "3", operator: "contains", value: "unsafe" },
+      ],
+      mode: "any",
+    },
   },
   {
     id: "action-1",
     type: "action",
-    position: { x: 1460, y: 180 },
-    data: {},
+    position: { x: 1500, y: 200 },
+    data: { actionType: "log" },
   },
 ];
 
 const defaultEdges: Edge[] = [
   {
-    id: "e-webcam-watchdog",
-    source: "webcam-1",
+    id: "e-camera-vlm",
+    source: "camera-1",
     sourceHandle: "frames",
-    target: "watchdog-1",
-    targetHandle: "frames",
+    target: "vlm-1",
+    targetHandle: "camera",
     animated: true,
     style: { stroke: "#22d3ee50" },
   },
   {
-    id: "e-watchdog-brain",
-    source: "watchdog-1",
-    sourceHandle: "triggered",
-    target: "brain-1",
-    targetHandle: "trigger",
-    animated: true,
-    style: { stroke: "#ef444450" },
-  },
-  {
-    id: "e-brain-action",
-    source: "brain-1",
-    sourceHandle: "analysis",
-    target: "action-1",
+    id: "e-vlm-logic",
+    source: "vlm-1",
+    sourceHandle: "response",
+    target: "logic-1",
     targetHandle: "input",
     animated: true,
     style: { stroke: "#a855f750" },
+  },
+  {
+    id: "e-logic-action",
+    source: "logic-1",
+    sourceHandle: "match",
+    target: "action-1",
+    targetHandle: "trigger",
+    animated: true,
+    style: { stroke: "#10b98150" },
   },
 ];
 
@@ -101,21 +112,73 @@ export default function Canvas() {
   const [nodes, setNodes, onNodesChange] = useNodesState(defaultNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(defaultEdges);
   const [backendConnected, setBackendConnected] = useState(false);
+  const [workflowInput, setWorkflowInput] = useState("");
+  const [generateLoading, setGenerateLoading] = useState(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
 
   // Connect to backend WebSocket
   useEffect(() => {
     pipelineSocket.connect();
 
-    const handler = (data: any) => {
+    const statusHandler = (data: any) => {
       setBackendConnected(data.connected);
     };
-    pipelineSocket.on("status", handler);
+    pipelineSocket.on("status", statusHandler);
+
+    const generatedHandler = (data: {
+      nodes?: { id: string; type: string; data?: Record<string, any> }[];
+      edges?: {
+        source: string;
+        target: string;
+        sourceHandle?: string;
+        targetHandle?: string;
+      }[];
+      error?: string | null;
+    }) => {
+      setGenerateLoading(false);
+      setGenerateError(data.error ?? null);
+      if (data.nodes?.length && !data.error) {
+        const spacing = 380;
+        const validNodes = data.nodes.filter((n) =>
+          VALID_NODE_TYPES.has(n.type)
+        );
+        const newNodes: Node[] = validNodes.map((n, i) => ({
+          id: n.id,
+          type: n.type,
+          position: { x: 50 + i * spacing, y: 200 },
+          data: n.data || {},
+        }));
+        const nodeIds = new Set(newNodes.map((n) => n.id));
+        const newEdges: Edge[] = (data.edges || [])
+          .filter((e) => nodeIds.has(e.source) && nodeIds.has(e.target))
+          .map((e, i) => ({
+            id: `e-${e.source}-${e.target}-${i}`,
+            source: e.source,
+            target: e.target,
+            sourceHandle: e.sourceHandle,
+            targetHandle: e.targetHandle,
+            animated: true,
+            style: { stroke: "#2a2a3a" },
+          }));
+        setNodes(newNodes);
+        setEdges(newEdges);
+      }
+    };
+    pipelineSocket.on("workflow_generated", generatedHandler);
 
     return () => {
-      pipelineSocket.off("status", handler);
+      pipelineSocket.off("status", statusHandler);
+      pipelineSocket.off("workflow_generated", generatedHandler);
       pipelineSocket.disconnect();
     };
-  }, []);
+  }, [setNodes, setEdges]);
+
+  const generateWorkflow = useCallback(() => {
+    if (!backendConnected || !workflowInput.trim()) return;
+    setGenerateLoading(true);
+    setGenerateError(null);
+    pipelineSocket.sendGenerateWorkflow(workflowInput.trim());
+  }, [backendConnected, workflowInput]);
 
   const onConnect = useCallback(
     (params: Connection) =>
@@ -183,7 +246,34 @@ export default function Canvas() {
               {nodes.length} nodes &middot; {edges.length} connections
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-1 max-w-2xl">
+            <input
+              type="text"
+              placeholder="Describe a workflow (e.g. monitor my desk for a coffee cup and alert me)"
+              value={workflowInput}
+              onChange={(e) => setWorkflowInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && generateWorkflow()}
+              disabled={!backendConnected || generateLoading}
+              className="nodrag flex-1 min-w-0 px-3 py-1.5 rounded-md text-xs bg-[#13131a] border text-slate-300 placeholder-slate-500 focus:outline-none focus:ring-1 focus:border-[#a855f760]"
+              style={{ borderColor: "#1e1e2e" }}
+            />
+            <button
+              type="button"
+              onClick={generateWorkflow}
+              disabled={
+                !backendConnected ||
+                generateLoading ||
+                !workflowInput.trim()
+              }
+              className="nodrag flex-shrink-0 px-3 py-1.5 rounded-md text-xs font-medium transition-opacity disabled:opacity-50"
+              style={{
+                background: "#a855f718",
+                color: "#a855f7",
+                border: "1px solid #a855f740",
+              }}
+            >
+              {generateLoading ? "Generating..." : "Generate workflow"}
+            </button>
             <div
               className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[10px] font-medium"
               style={{
@@ -207,6 +297,12 @@ export default function Canvas() {
             </div>
           </div>
         </div>
+
+        {generateError && (
+          <div className="absolute top-11 left-4 right-4 z-20 nodrag px-3 py-2 rounded-md text-xs text-red-400 border border-red-500/30 bg-red-950/30">
+            {generateError}
+          </div>
+        )}
 
         <ReactFlow
           nodes={nodes}
@@ -236,10 +332,7 @@ export default function Canvas() {
             size={1}
             color="#1a1a2e"
           />
-          <Controls
-            showInteractive={false}
-            position="bottom-right"
-          />
+          <Controls showInteractive={false} position="bottom-right" />
           <MiniMap
             nodeStrokeWidth={3}
             pannable
@@ -251,12 +344,11 @@ export default function Canvas() {
             maskColor="rgba(10, 10, 15, 0.8)"
             nodeColor={(node) => {
               const colors: Record<string, string> = {
-                webcamInput: "#22d3ee",
-                watchdog: "#f59e0b",
-                reasoningBrain: "#a855f7",
+                camera: "#22d3ee",
+                visualLlm: "#a855f7",
+                logic: "#f59e0b",
+                llm: "#3b82f6",
                 action: "#10b981",
-                textGen: "#3b82f6",
-                filter: "#ec4899",
               };
               return colors[node.type || ""] || "#64748b";
             }}

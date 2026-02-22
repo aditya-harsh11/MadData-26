@@ -1,6 +1,4 @@
-import type { FrameResult, ReasoningResult } from "./types";
-
-type MessageHandler = (data: FrameResult | ReasoningResult) => void;
+type MessageHandler = (data: any) => void;
 
 const BACKEND_WS_URL = "ws://localhost:8000/ws";
 
@@ -22,7 +20,7 @@ export class PipelineSocket {
 
       this.ws.onopen = () => {
         this._connected = true;
-        this.emit("status", { connected: true } as any);
+        this.emit("status", { connected: true });
         console.log("[PipelineSocket] Connected to backend");
       };
 
@@ -39,7 +37,7 @@ export class PipelineSocket {
 
       this.ws.onclose = () => {
         this._connected = false;
-        this.emit("status", { connected: false } as any);
+        this.emit("status", { connected: false });
         this.scheduleReconnect();
       };
 
@@ -69,12 +67,12 @@ export class PipelineSocket {
     );
   }
 
-  sendReasoning(base64: string, prompt: string, triggerLabel: string) {
+  sendVlmAnalyze(image: string, prompt: string, nodeId: string) {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
     this.ws.send(
       JSON.stringify({
-        type: "reasoning",
-        payload: { image: base64, prompt, trigger_label: triggerLabel },
+        type: "vlm_analyze",
+        payload: { image, prompt, node_id: nodeId },
       })
     );
   }
@@ -89,12 +87,12 @@ export class PipelineSocket {
     );
   }
 
-  sendConfig(config: Record<string, number | string>) {
+  sendGenerateWorkflow(description: string) {
     if (this.ws?.readyState !== WebSocket.OPEN) return;
     this.ws.send(
       JSON.stringify({
-        type: "config",
-        payload: config,
+        type: "generate_workflow",
+        payload: { description },
       })
     );
   }

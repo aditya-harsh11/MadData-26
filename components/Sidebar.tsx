@@ -4,8 +4,7 @@ import React from "react";
 import {
   Camera,
   Eye,
-  Brain,
-  Filter,
+  GitBranch,
   MessageSquare,
   Zap,
   Cpu,
@@ -17,16 +16,15 @@ import { NODE_CATALOG, type NodeTypeInfo } from "@/lib/types";
 const iconMap: Record<string, React.ReactNode> = {
   Camera: <Camera size={18} />,
   Eye: <Eye size={18} />,
-  Brain: <Brain size={18} />,
-  Filter: <Filter size={18} />,
+  GitBranch: <GitBranch size={18} />,
   MessageSquare: <MessageSquare size={18} />,
   Zap: <Zap size={18} />,
 };
 
 const categoryLabels: Record<string, string> = {
   input: "Input",
-  processing: "Processing",
   ai: "AI Models",
+  logic: "Logic",
   output: "Output",
 };
 

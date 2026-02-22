@@ -18,6 +18,22 @@ NEXA_API = "http://127.0.0.1:18181"
 VLM_MODEL = "NexaAI/OmniNeural-4B"
 
 
+def _is_repetitive_garbage(text: str, min_len: int = 20, repeat_threshold: float = 0.5) -> bool:
+    """Detect output that is mostly one short token repeated (e.g. 'ThereThereThere...')."""
+    if not text or len(text) < min_len:
+        return False
+    text = text.strip()
+    # Check if a short substring (2–10 chars) repeats over most of the string
+    for n in range(2, min(11, len(text) // 2 + 1)):
+        segment = text[:n]
+        if not segment.strip():
+            continue
+        count = text.count(segment)
+        if count * n >= repeat_threshold * len(text):
+            return True
+    return False
+
+
 class ReasoningBrain:
 
     def __init__(self):
@@ -110,6 +126,8 @@ class ReasoningBrain:
             ],
             "max_tokens": 256,
             "stream": False,
+            "repetition_penalty": 1.15,
+            "temperature": 0.3,
         }
 
         try:
@@ -119,7 +137,10 @@ class ReasoningBrain:
                 timeout=120,
             )
             data = resp.json()
-            analysis_text = data["choices"][0]["message"]["content"]
+            analysis_text = (data.get("choices") or [{}])[0].get("message", {}).get("content") or ""
+            if _is_repetitive_garbage(analysis_text):
+                logger.warning("VLM returned repetitive output, using fallback")
+                analysis_text = "[Vision glitch: response was repetitive. Try again.]"
         except httpx.TimeoutException:
             logger.error("VLM API timeout (120 s)")
             analysis_text = "[VLM timeout]"

@@ -5,9 +5,9 @@ import { Handle, Position, type NodeProps } from "reactflow";
 import { Camera, Play, Square } from "lucide-react";
 import NodeShell from "./NodeShell";
 import { FrameCapture } from "@/lib/frameCapture";
-import { pipelineSocket } from "@/lib/websocket";
+import { useFrameStore } from "@/lib/frameStore";
 
-export default function WebcamInputNode({ id, selected }: NodeProps) {
+export default function CameraNode({ id, selected }: NodeProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const captureRef = useRef<FrameCapture | null>(null);
   const [active, setActive] = useState(false);
@@ -28,7 +28,7 @@ export default function WebcamInputNode({ id, selected }: NodeProps) {
 
       capture.startCapture((base64) => {
         setFrameCount((c) => c + 1);
-        pipelineSocket.sendFrame(base64, id);
+        useFrameStore.getState().setFrame(id, base64);
       });
 
       captureRef.current = capture;
@@ -45,18 +45,20 @@ export default function WebcamInputNode({ id, selected }: NodeProps) {
       videoRef.current.srcObject = null;
     }
     setActive(false);
-  }, []);
+    useFrameStore.getState().removeFrame(id);
+  }, [id]);
 
   useEffect(() => {
     return () => {
       captureRef.current?.destroy();
+      useFrameStore.getState().removeFrame(id);
     };
-  }, []);
+  }, [id]);
 
   return (
     <NodeShell
       accent="#22d3ee"
-      title="Webcam Input"
+      title="Camera"
       icon={<Camera size={16} />}
       status={active ? "running" : error ? "error" : "idle"}
       selected={selected}

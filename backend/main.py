@@ -1,9 +1,9 @@
 """
 SnapFlow Backend — FastAPI server with WebSocket pipeline.
 
-Dual-tier AI architecture:
-  Tier 1 (Watchdog): Lightweight ONNX object detection on every frame.
-  Tier 2 (Brain):    Heavy Nexa SDK multimodal reasoning, triggered on demand.
+Visual LLM architecture:
+  On-demand VLM analysis via Nexa SDK, triggered by frontend interval timer.
+  Single model (OmniNeural-4B) handles both vision and text-only requests.
 
 Communicates with the Electron/Next.js frontend via WebSocket.
 """
@@ -19,7 +19,6 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from watchdog import Watchdog
 from reasoning import ReasoningBrain
 
 # ─── Qualcomm AI Hub Configuration ───
@@ -45,17 +44,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("snapflow")
 
-# ─── AI Engines ───
-MODEL_DIR = Path(__file__).parent / "models"
-MODEL_DIR.mkdir(exist_ok=True)
-
-STD_MODEL = MODEL_DIR / "yolov8n.onnx"
-LOCAL_MODEL = STD_MODEL
-watchdog = Watchdog(model_path=str(LOCAL_MODEL), confidence=0.45)
+# ─── AI Engine ───
 brain = ReasoningBrain()
 
 DEFAULT_PROMPT = "Describe what you see. If there is any safety concern, explain it."
-REASONING_INTERVAL_DEFAULT = 5
 
 
 @asynccontextmanager
@@ -67,27 +59,15 @@ async def lifespan(app: FastAPI):
 
     loop = asyncio.get_event_loop()
 
-    if not watchdog.loaded:
-        logger.warning(
-            f"Watchdog model not found at {MODEL_DIR / 'yolov8n.onnx'}. "
-            "Place a YOLOv8-nano ONNX model there, or detections will be empty."
-        )
-
     async def _load_brain():
         try:
             await loop.run_in_executor(None, brain.load_vlm)
         except Exception as e:
             logger.warning(f"Could not load VLM: {e}")
-        try:
-            await loop.run_in_executor(None, brain.load_llm)
-        except Exception as e:
-            logger.warning(f"Could not load LLM: {e}")
-        logger.info(f"VLM loaded:      {brain.vlm_loaded}")
-        logger.info(f"LLM loaded:      {brain.llm_loaded}")
+        logger.info(f"VLM loaded: {brain.vlm_loaded}")
 
     asyncio.create_task(_load_brain())
 
-    logger.info(f"Watchdog loaded: {watchdog.loaded}")
     logger.info("Backend ready — waiting for WebSocket connections")
 
     yield
@@ -109,19 +89,9 @@ app.add_middleware(
 # ─── Health Check ───
 @app.get("/health")
 async def health():
-    active_providers = []
-    if watchdog.session:
-        active_providers = watchdog.session.get_providers()
-    npu_active = "QNNExecutionProvider" in active_providers
-
     return {
         "status": "ok",
-        "watchdog_loaded": watchdog.loaded,
         "vlm_loaded": brain.vlm_loaded,
-        "llm_loaded": brain.llm_loaded,
-        "npu_active": npu_active,
-        "execution_providers": active_providers,
-        "model_path": str(LOCAL_MODEL),
     }
 
 
@@ -149,16 +119,6 @@ class ConnectionManager:
             except Exception:
                 self.disconnect(cid)
 
-    async def broadcast(self, msg_type: str, payload: dict):
-        disconnected = []
-        for cid, ws in self.active.items():
-            try:
-                await ws.send_json({"type": msg_type, "payload": payload})
-            except Exception:
-                disconnected.append(cid)
-        for cid in disconnected:
-            self.disconnect(cid)
-
 
 manager = ConnectionManager()
 
@@ -171,15 +131,8 @@ async def websocket_endpoint(ws: WebSocket):
     cid = await manager.connect(ws)
 
     _client_state[cid] = {
-        "latest_frame": None,
-        "latest_detections": [],
-        "prompt": DEFAULT_PROMPT,
-        "interval": REASONING_INTERVAL_DEFAULT,
-        "reasoning_task": None,
+        "latest_frames": {},  # node_id -> latest base64 frame
     }
-
-    task = asyncio.create_task(reasoning_loop(cid))
-    _client_state[cid]["reasoning_task"] = task
 
     try:
         while True:
@@ -190,12 +143,14 @@ async def websocket_endpoint(ws: WebSocket):
 
             if msg_type == "frame":
                 await handle_frame(cid, payload)
-            elif msg_type == "reasoning":
-                await handle_reasoning(cid, payload)
+            elif msg_type == "vlm_analyze":
+                await handle_vlm_analyze(cid, payload)
             elif msg_type == "text_gen":
                 await handle_text_gen(cid, payload)
-            elif msg_type == "config":
-                await handle_config(cid, payload)
+            elif msg_type == "describe_workflow":
+                await handle_describe_workflow(cid, payload)
+            elif msg_type == "generate_workflow":
+                await handle_generate_workflow(cid, payload)
             else:
                 logger.warning(f"Unknown message type: {msg_type}")
 
@@ -204,143 +159,57 @@ async def websocket_endpoint(ws: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error ({cid}): {e}")
     finally:
-        if cid in _client_state:
-            t = _client_state[cid].get("reasoning_task")
-            if t:
-                t.cancel()
-            del _client_state[cid]
+        _client_state.pop(cid, None)
         brain.clear_client(cid)
         manager.disconnect(cid)
 
 
-# ─── Frame handler (Tier 1 — Watchdog) ───
+# ─── Frame handler (store latest frame) ───
 
 async def handle_frame(cid: str, payload: dict):
-    """Run Watchdog detection on incoming frame and store it for reasoning."""
+    """Store the latest frame from a camera node."""
     image_b64 = payload.get("image", "")
     node_id = payload.get("node_id", "")
 
-    if not image_b64:
+    if not image_b64 or not node_id:
         return
-
-    loop = asyncio.get_event_loop()
-    detections = await loop.run_in_executor(
-        None, watchdog.detect_from_base64, image_b64
-    )
-
-    await manager.send(cid, "detection", {
-        "node_id": node_id,
-        "detections": detections,
-        "frame_id": str(uuid.uuid4())[:8],
-    })
 
     if cid in _client_state:
-        _client_state[cid]["latest_frame"] = image_b64
-        _client_state[cid]["latest_detections"] = detections
+        _client_state[cid]["latest_frames"][node_id] = image_b64
 
 
-# ─── Reasoning loop (Tier 2 — VLM) ───
+# ─── VLM analyze handler ───
 
-async def reasoning_loop(cid: str):
-    """Periodic VLM reasoning. Runs immediately once a frame arrives, then
-    repeats every `interval` seconds. Uses short sleep ticks so interval
-    changes take effect right away."""
-    logger.info(f"Reasoning loop started for client {cid}")
-    try:
-        # Wait for first frame (poll every 0.5s so we start fast)
-        while cid in _client_state:
-            if _client_state[cid].get("latest_frame"):
-                break
-            await asyncio.sleep(0.5)
-
-        while cid in _client_state:
-            state = _client_state[cid]
-            frame = state.get("latest_frame")
-            if not frame:
-                await asyncio.sleep(0.5)
-                continue
-
-            prompt = state.get("prompt", DEFAULT_PROMPT)
-
-            await manager.send(cid, "trigger_reasoning", {})
-
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                brain.analyze_frame,
-                frame,
-                prompt,
-                cid,
-            )
-
-            analysis = result.get("analysis", "")
-            logger.info(f"Reasoning result for {cid}: {analysis[:100]}")
-
-            await manager.send(cid, "reasoning", result)
-            await manager.send(cid, "action_trigger", {
-                "analysis": analysis,
-            })
-
-            # Sleep in 0.5s ticks so interval changes react immediately
-            interval = state.get("interval", REASONING_INTERVAL_DEFAULT)
-            elapsed = 0.0
-            while elapsed < interval and cid in _client_state:
-                await asyncio.sleep(0.5)
-                elapsed += 0.5
-                interval = _client_state.get(cid, {}).get("interval", interval)
-
-    except asyncio.CancelledError:
-        logger.info(f"Reasoning loop cancelled for {cid}")
-    except Exception as e:
-        logger.error(f"Reasoning loop error for {cid}: {e}")
-
-
-# ─── Config handler ───
-
-async def handle_config(cid: str, payload: dict):
-    """Handle configuration updates from the frontend."""
-    if cid not in _client_state:
-        return
-
-    if "reasoning_interval" in payload:
-        new_interval = max(5, min(300, int(payload["reasoning_interval"])))
-        _client_state[cid]["interval"] = new_interval
-        logger.info(f"Client {cid} reasoning interval set to {new_interval}s")
-
-    if "reasoning_prompt" in payload:
-        new_prompt = str(payload["reasoning_prompt"]).strip()
-        if new_prompt:
-            _client_state[cid]["prompt"] = new_prompt
-            logger.info(f"Client {cid} prompt set to: {new_prompt[:80]}")
-
-    await manager.send(cid, "config_ack", {
-        "reasoning_interval": _client_state[cid]["interval"],
-        "reasoning_prompt": _client_state[cid]["prompt"],
-    })
-
-
-# ─── On-demand reasoning handler ───
-
-async def handle_reasoning(cid: str, payload: dict):
-    """Run VLM reasoning on a specific frame+prompt sent by the frontend."""
+async def handle_vlm_analyze(cid: str, payload: dict):
+    """Run VLM analysis on a frame with a specific prompt, addressed to a node."""
     image_b64 = payload.get("image", "")
     prompt = payload.get("prompt", DEFAULT_PROMPT)
+    node_id = payload.get("node_id", "")
+
+    if not image_b64:
+        await manager.send(cid, "vlm_result", {
+            "node_id": node_id,
+            "analysis": "[No frame available]",
+            "latency_ms": 0,
+        })
+        return
 
     loop = asyncio.get_event_loop()
     result = await loop.run_in_executor(
         None, brain.analyze_frame, image_b64, prompt, cid
     )
 
-    await manager.send(cid, "reasoning", result)
-    await manager.send(cid, "action_trigger", {
+    await manager.send(cid, "vlm_result", {
+        "node_id": node_id,
         "analysis": result.get("analysis", ""),
+        "latency_ms": result.get("latency_ms", 0),
     })
 
 
 # ─── Text generation handler ───
 
 async def handle_text_gen(cid: str, payload: dict):
-    """Text generation via Llama-3.2-3B."""
+    """Text generation via OmniNeural-4B (text-only, no image)."""
     prompt = payload.get("prompt", "")
     node_id = payload.get("node_id", "")
 
@@ -351,6 +220,194 @@ async def handle_text_gen(cid: str, payload: dict):
         "node_id": node_id,
         **result,
     })
+
+
+# ─── Describe workflow (AI-generated summary) ───
+
+NODE_TYPE_LABELS = {
+    "camera": "Camera",
+    "visualLlm": "Visual LLM",
+    "logic": "Logic",
+    "llm": "LLM",
+    "action": "Action",
+}
+
+
+def _workflow_to_prompt(nodes: list, edges: list) -> str:
+    """Turn nodes/edges into a short structured description for the LLM."""
+    lines = ["Pipeline structure:"]
+    for n in nodes:
+        nid = n.get("id", "?")
+        ntype = n.get("type", "?")
+        label = NODE_TYPE_LABELS.get(ntype, ntype)
+        lines.append(f"  - Node {nid}: {label} ({ntype})")
+    lines.append("Connections:")
+    for e in edges:
+        src = e.get("source", "?")
+        tgt = e.get("target", "?")
+        lines.append(f"  - {src} → {tgt}")
+    return "\n".join(lines)
+
+
+async def handle_describe_workflow(cid: str, payload: dict):
+    """Generate an AI-written description of the current workflow."""
+    nodes = payload.get("nodes") or []
+    edges = payload.get("edges") or []
+    if not nodes and not edges:
+        await manager.send(cid, "workflow_description", {
+            "description": "The pipeline has no nodes or connections yet.",
+            "error": None,
+        })
+        return
+
+    structure = _workflow_to_prompt(nodes, edges)
+    prompt = (
+        "You are a technical writer. In 2–4 short paragraphs, describe this pipeline "
+        "in plain language: what each node does, how data flows, and what the workflow "
+        "achieves overall. Be clear and concise.\n\n"
+        + structure
+    )
+
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: brain.generate_text(prompt, max_tokens=512),
+        )
+        description = result.get("text", "").strip()
+        if not description:
+            description = "Could not generate description."
+        await manager.send(cid, "workflow_description", {
+            "description": description,
+            "error": None,
+        })
+    except Exception as e:
+        logger.exception("describe_workflow failed: %s", e)
+        await manager.send(cid, "workflow_description", {
+            "description": "",
+            "error": str(e),
+        })
+
+
+# ─── Generate workflow from text (AI creates nodes + edges) ───
+
+VALID_NODE_TYPES = {"camera", "visualLlm", "logic", "llm", "action"}
+
+GENERATE_WORKFLOW_PROMPT = """You are a pipeline designer for SnapFlow, a visual AI camera pipeline editor.
+The user will describe a workflow. Output ONLY valid JSON, no other text.
+
+Output format:
+{
+  "nodes": [
+    {"id": "unique-id", "type": "TYPE", "data": { ... }},
+    ...
+  ],
+  "edges": [
+    {"source": "source-id", "target": "target-id", "sourceHandle": "handle-name", "targetHandle": "handle-name"},
+    ...
+  ]
+}
+
+Allowed node types, their data fields, and handle names:
+
+1. camera — Live camera feed. Data: {} (no fields needed).
+   Output handle: "frames"
+
+2. visualLlm — Vision AI that analyzes camera frames with a custom prompt. Data: {"prompt": "what to look for", "interval": 10}
+   Input handle: "camera" (connect from camera's "frames")
+   Output handle: "response"
+
+3. logic — Conditional routing based on text content. Data: {"conditions": [{"id": "1", "operator": "contains", "value": "keyword"}], "mode": "any"}
+   Operators: contains, not_contains, equals, starts_with
+   Input handle: "input" (connect from visualLlm's "response" or llm's "output")
+   Output handles: "match" (condition true), "no_match" (condition false)
+
+4. llm — Text processing (same model, no image). Data: {"systemPrompt": "instruction for the LLM"}
+   Input handle: "input" (connect from any text output)
+   Output handle: "output"
+
+5. action — Terminal action node. Data: {"actionType": "sound"} (options: sound, log, notification, webhook)
+   Input handle: "trigger" (connect from logic's "match" or any text output)
+
+IMPORTANT: Always populate the data fields with sensible values based on the user's description. For example, if the user says "detect cats", set the visualLlm prompt to "Look for cats in the scene. Report if any cats are visible." and the logic condition to {"operator": "contains", "value": "cat"}.
+
+Use short, unique node ids (e.g. camera-1, vlm-1, logic-1, action-1). Output only the JSON object."""
+
+
+def _parse_workflow_json(raw: str):
+    """Extract and validate nodes/edges from LLM output. Returns (nodes, edges)."""
+    text = raw.strip()
+    if "```" in text:
+        start = text.find("```")
+        if "json" in text[: start + 10].lower():
+            start = text.find("\n", start) + 1
+        end = text.find("```", start)
+        if end != -1:
+            text = text[start:end]
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return [], []
+
+    nodes = data.get("nodes") or []
+    edges = data.get("edges") or []
+    out_nodes = []
+    for n in nodes:
+        nid = n.get("id") or n.get("nodeId")
+        ntype = (n.get("type") or n.get("nodeType") or "").strip()
+        ndata = n.get("data") or {}
+        if not nid or not ntype:
+            continue
+        if ntype not in VALID_NODE_TYPES:
+            continue
+        out_nodes.append({"id": str(nid), "type": ntype, "data": ndata})
+    out_edges = []
+    for e in edges:
+        src = e.get("source") or e.get("from")
+        tgt = e.get("target") or e.get("to")
+        edge_data: dict = {"source": str(src), "target": str(tgt)}
+        if e.get("sourceHandle"):
+            edge_data["sourceHandle"] = str(e["sourceHandle"])
+        if e.get("targetHandle"):
+            edge_data["targetHandle"] = str(e["targetHandle"])
+        if src and tgt:
+            out_edges.append(edge_data)
+    return out_nodes, out_edges
+
+
+async def handle_generate_workflow(cid: str, payload: dict):
+    """Turn a text description into nodes and edges, return for frontend to apply."""
+    description = (payload.get("description") or payload.get("text") or "").strip()
+    if not description:
+        await manager.send(cid, "workflow_generated", {
+            "nodes": [],
+            "edges": [],
+            "error": "No description provided.",
+        })
+        return
+
+    prompt = GENERATE_WORKFLOW_PROMPT + "\n\nUser description:\n" + description
+
+    try:
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: brain.generate_text(prompt, max_tokens=800),
+        )
+        raw = (result.get("text") or "").strip()
+        nodes, edges = _parse_workflow_json(raw)
+        await manager.send(cid, "workflow_generated", {
+            "nodes": nodes,
+            "edges": edges,
+            "error": None,
+        })
+    except Exception as e:
+        logger.exception("generate_workflow failed: %s", e)
+        await manager.send(cid, "workflow_generated", {
+            "nodes": [],
+            "edges": [],
+            "error": str(e),
+        })
 
 
 # ─── Entry Point ───
